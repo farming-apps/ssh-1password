@@ -26,6 +26,7 @@ def blob(seed):
 
 KEYS = [("ssh-ed25519", blob("personal"), "GitHub personal"),
         ("ssh-ed25519", blob("work"), "GitHub work"),
+        ("ssh-ed25519", blob("sign"), "Signing work"),
         ("ssh-ed25519", blob("dup"), "Twice"),
         ("ssh-ed25519", blob("dup2"), "Twice")]
 
@@ -63,13 +64,17 @@ class Base(unittest.TestCase):
         self.fake_out = os.path.join(self.home, "fake-keys.txt")
         with open(self.fake_out, "w") as fh:
             fh.write("".join(f"{t} {b} {c}\n" for t, b, c in KEYS))
-        self._saved = (ssh1p.SSH_ADD, ssh1p.PLATFORM, ssh1p.app_installed)
+        self.signer = os.path.join(self.home, "op-ssh-sign")  # stands in for the binary inside 1Password.app
+        with open(self.signer, "w") as fh:
+            fh.write("#!/bin/sh\nexit 1\n")
+        self._saved = (ssh1p.SSH_ADD, ssh1p.PLATFORM, ssh1p.app_installed, ssh1p.signer_path)
         ssh1p.SSH_ADD = [sys.executable, "-I", FAKE_SSH_ADD, self.fake_out, "0"]
         ssh1p.PLATFORM = "darwin"
         ssh1p.app_installed = lambda: True
+        ssh1p.signer_path = lambda: self.signer
 
     def tearDown(self):
-        ssh1p.SSH_ADD, ssh1p.PLATFORM, ssh1p.app_installed = self._saved
+        ssh1p.SSH_ADD, ssh1p.PLATFORM, ssh1p.app_installed, ssh1p.signer_path = self._saved
         self.tmp.cleanup()
 
     def env(self, dry=False):
@@ -121,6 +126,25 @@ class Parsing(unittest.TestCase):
         self.assertEqual([h["alias"] for h in hosts], ["fine"])
         self.assertEqual(len(problems), 3)
 
+    def test_sign_field_validation(self):
+        text = ("noemail:\n  key: K\n  sign: manual\n"
+                "bad:\n  key: K\n  email: e@x\n  sign: yes\n"
+                "nosign:\n  key: K\n  email: e@x\n  signing_key: S\n"
+                "fine:\n  key: K\n  email: e@x\n  sign: always\n  signing_key: S\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as fh:
+            fh.write(text)
+        hosts, problems = ssh1p.load_registry(fh.name)
+        os.unlink(fh.name)
+        by = {h["alias"]: h for h in hosts}
+        self.assertEqual(by["noemail"]["sign"], "")
+        self.assertEqual(by["bad"]["sign"], "")
+        self.assertEqual(by["nosign"]["signing_key"], "")
+        self.assertEqual((by["fine"]["sign"], by["fine"]["signing_key"]), ("always", "S"))
+        self.assertTrue(any("sign: without email:" in p for p in problems))
+        self.assertTrue(any("must be always or manual" in p for p in problems))
+        self.assertTrue(any("signing_key: without sign:" in p for p in problems))
+        self.assertEqual(len(problems), 3)
+
 
 class Install(Base):
     def test_full_install_then_idempotent(self):
@@ -135,6 +159,7 @@ class Install(Base):
         self.assertEqual(self.read(".ssh/1password/github-work.pub"), f"ssh-ed25519 {blob('work')} GitHub work\n")
         self.assertEqual(sorted(os.listdir(os.path.join(self.home, ".ssh/1password"))),
                          ["github-personal.pub", "github-work.pub"])
+        self.assertTrue(all(n.endswith(".pub") for n in os.listdir(os.path.join(self.home, ".ssh/1password"))))
         config = self.read(".ssh/config")
         self.assertTrue(config.endswith("Match all\nInclude config.d/1password.conf\n"))
         toml = self.read(".config/1Password/ssh/agent.toml")
@@ -206,9 +231,71 @@ class Install(Base):
         fp = ssh1p.fingerprint(blob("work"))
         with open(self.registry, "w") as fh:
             fh.write(f"w:\n  key: {fp}\n")
-        self.run_install()
+        _rc, out = self.run_install()
         self.assertTrue(os.path.exists(os.path.join(self.home, ".ssh/1password", ssh1p.slug(fp) + ".pub")))
-        self.assertNotIn("[[ssh-keys]]", self.read(".config/1Password/ssh/agent.toml"))
+        # an allowlist with zero entries would hide every key: it must not be written
+        self.assertFalse(os.path.exists(os.path.join(self.home, ".config/1Password/ssh/agent.toml")))
+        self.assertIn("needs item titles", out)
+
+    def test_fingerprint_only_does_not_rewrite_generated_toml(self):
+        self.run_install()  # generates agent.toml from titled keys
+        before = self.read(".config/1Password/ssh/agent.toml")
+        with open(self.registry, "w") as fh:
+            fh.write(f"w:\n  key: {ssh1p.fingerprint(blob('work'))}\n")
+        self.run_install()
+        self.assertEqual(self.read(".config/1Password/ssh/agent.toml"), before)
+
+    # --- host-registry ---------------------------------------------------------------------
+
+    def test_registry_path_precedence(self):
+        saved = {k: os.environ.get(k) for k in ("HOME", "SSH_1P_HOSTS", "XDG_CONFIG_HOME")}
+        try:
+            os.environ["HOME"] = self.home  # makes self.home the "real" home for Env
+            os.environ.pop("XDG_CONFIG_HOME", None)
+            os.environ.pop("SSH_1P_HOSTS", None)
+            self.assertEqual(ssh1p.Env(self.home).registry,
+                             os.path.join(self.home, ".config/ssh-1password/hosts.yml"))
+            os.environ["SSH_1P_HOSTS"] = "/elsewhere/hosts.yml"
+            self.assertEqual(ssh1p.Env(self.home).registry, "/elsewhere/hosts.yml")
+            self.assertEqual(ssh1p.Env(self.home, "/explicit.yml").registry, "/explicit.yml")
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_existing_registry_is_never_rewritten(self):
+        with open(self.registry) as fh:
+            before = fh.read()
+        self.run_install()
+        self.run_install()
+        with open(self.registry) as fh:
+            self.assertEqual(fh.read(), before)
+
+    # --- agent-public-keys -----------------------------------------------------------------
+
+    def test_app_missing_changes_nothing(self):
+        ssh1p.app_installed = lambda: False
+        rc, out = self.run_install()
+        self.assertEqual(rc, 0)
+        self.assertIn("not installed", out)
+        self.assertEqual(sorted(os.listdir(self.home)), ["fake-keys.txt", "hosts.yml", "op-ssh-sign"])  # fixtures only
+
+    # --- ssh-client-config -----------------------------------------------------------------
+
+    def test_missing_config_is_created_with_include_only(self):
+        self.run_install()
+        self.assertEqual(self.read(".ssh/config"), ssh1p.INCLUDE_BLOCK.lstrip("\n"))
+        self.assertEqual(self.mode(".ssh/config"), 0o600)
+        self.assertEqual([f for f in os.listdir(os.path.join(self.home, ".ssh")) if ".bak." in f], [])
+
+    def test_minimal_entry_block(self):
+        with open(self.registry, "a") as fh:
+            fh.write("bare:\n  key: GitHub personal\n")
+        self.run_install()
+        self.assertIn("\nHost bare\n    IdentityFile ~/.ssh/1password/github-personal.pub\n    IdentitiesOnly yes\n\n",
+                      self.read(".ssh/config.d/1password.conf"))
 
     def test_template_without_hosts(self):
         os.unlink(self.registry)
@@ -243,6 +330,45 @@ class Doctor(Base):
         self.assertIn("does not include", out)
         self.assertIn(".pub missing", out)
 
+    def test_doctor_fails_without_app(self):
+        self.run_install()
+        ssh1p.app_installed = lambda: False
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL 1Password app not found", out)
+
+    def test_doctor_warns_when_agent_unreachable(self):
+        self.run_install()
+        ssh1p.SSH_ADD = [sys.executable, "-I", FAKE_SSH_ADD, self.fake_out, "2"]
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("WARN SSH agent not reachable", out)
+        self.assertIn("agent not available to confirm", out)
+
+    def test_doctor_warns_on_loose_permissions(self):
+        self.run_install()
+        os.chmod(os.path.join(self.home, ".ssh/config.d/1password.conf"), 0o644)
+        os.chmod(os.path.join(self.home, ".ssh"), 0o755)
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1password.conf is readable by others", out)
+        self.assertIn(".ssh is accessible by others", out)
+
+    def test_doctor_warns_on_missing_agent_toml(self):
+        self.run_install()
+        os.remove(os.path.join(self.home, ".config/1Password/ssh/agent.toml"))
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("WARN ~/.config/1Password/ssh/agent.toml missing", out)
+
+    def test_doctor_warns_on_foreign_agent_toml_missing_title(self):
+        self.run_install()
+        with open(os.path.join(self.home, ".config/1Password/ssh/agent.toml"), "w") as fh:
+            fh.write('[[ssh-keys]]\nitem = "GitHub personal"\n')
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("(yours) does not list: GitHub work", out)
+
     def test_doctor_warns_on_orphan_and_rotated_key(self):
         self.run_install()
         pubdir = os.path.join(self.home, ".ssh/1password")
@@ -254,6 +380,247 @@ class Doctor(Base):
         self.assertEqual(rc, 0)
         self.assertIn("orphan", out)
         self.assertIn("different key under this title", out)
+
+
+class GitIdentity(Base):
+    WORK = "github-work:\n  hostname: github.com\n  user: git\n  key: GitHub work\n  email: me@work.example\n  name: Work Me\n"
+
+    def setUp(self):
+        super().setUp()
+        with open(self.registry, "w") as fh:
+            fh.write("github-personal:\n  hostname: github.com\n  user: git\n  key: GitHub personal\n" + self.WORK)
+
+    def gitconfig(self):
+        path = os.path.join(self.home, ".gitconfig")
+        if not os.path.exists(path):
+            return ""
+        with open(path) as fh:
+            return fh.read()
+
+    def test_identity_applied_probed_and_removed(self):
+        _rc, out = self.run_install()
+        ident = self.read(".config/ssh-1password/git/github-work.gitconfig")
+        self.assertIn("[user]\n\temail = me@work.example\n\tname = Work Me\n", ident)
+        self.assertEqual(self.mode(".config/ssh-1password/git/github-work.gitconfig"), 0o600)
+        cfg = self.gitconfig()
+        self.assertIn('[includeIf "hasconfig:remote.*.url:git@github-work:*/**"]', cfg)
+        self.assertIn('[includeIf "hasconfig:remote.*.url:git@github-work:*"]', cfg)
+        self.assertIn('[includeIf "hasconfig:remote.*.url:ssh://git@github-work/**"]', cfg)
+        self.assertIn('[includeIf "hasconfig:remote.*.url:github-work:*/**"]', cfg)
+        self.assertNotIn("github-personal", cfg)  # no email -> no identity
+
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("github-work: repos cloned through this alias commit as <me@work.example>", out)
+
+        _rc, out = self.run_install()
+        self.assertIn("git identities for 1 alias(es) (no changes)", out)
+        self.assertNotIn("set    git includeIf", out)
+
+        with open(self.registry, "w") as fh:
+            fh.write("github-work:\n  hostname: github.com\n  user: git\n  key: GitHub work\n")
+        _rc, out = self.run_install()
+        self.assertIn("unset  git includeIf", out)
+        self.assertIn("remove ~/.config/ssh-1password/git/github-work.gitconfig", out)
+        self.assertNotIn("includeIf", self.gitconfig())
+        self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password/git/github-work.gitconfig")))
+
+    def test_doctor_detects_missing_include(self):
+        self.run_install()
+        os.remove(os.path.join(self.home, ".gitconfig"))
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 1)
+        self.assertIn("includeIf entries are missing", out)
+        self.assertIn("would commit as", out)
+
+    def test_dry_run_touches_no_git_config(self):
+        _rc, out = self.run_install(dry=True)
+        self.assertIn('set    git includeIf "hasconfig:remote.*.url:git@github-work:*/**"', out)
+        self.assertEqual(self.gitconfig(), "")
+        self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password/git")))
+
+    def probe(self, url):
+        env = self.env()
+        with tempfile.TemporaryDirectory() as tmp:
+            ssh1p.git_run(env, "init", "-q", cwd=tmp)
+            ssh1p.git_run(env, "remote", "add", "origin", url, cwd=tmp)
+            _rc, email = ssh1p.git_run(env, "config", "--get", "user.email", cwd=tmp)
+        return email.strip()
+
+    def test_flat_remote_and_alias_without_user(self):
+        with open(self.registry, "a") as fh:
+            fh.write("plain:\n  key: GitHub personal\n  email: plain@example\n")
+        self.run_install()
+        self.assertEqual(self.probe("git@github-work:repo.git"), "me@work.example")
+        self.assertEqual(self.probe("git@github-work:org/sub/repo.git"), "me@work.example")
+        self.assertEqual(self.probe("plain:org/repo.git"), "plain@example")
+        self.assertEqual(self.probe("ssh://plain/org/repo.git"), "plain@example")
+        self.assertEqual(self.probe("git@github-personal:org/repo.git"), "")
+        self.assertNotIn("git@plain", self.gitconfig())  # no user: only bare patterns
+
+    def test_old_git_skips_identities(self):
+        saved = ssh1p.git_supports_hasconfig
+        ssh1p.git_supports_hasconfig = lambda env: False
+        try:
+            _rc, out = self.run_install()
+            self.assertIn("git < 2.36", out)
+            self.assertEqual(self.gitconfig(), "")
+            self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password/git")))
+            rc, out = self.run_doctor()
+            self.assertEqual(rc, 0, out)
+            self.assertIn("WARN git missing or older than 2.36", out)
+        finally:
+            ssh1p.git_supports_hasconfig = saved
+
+    def test_name_without_email_is_ignored(self):
+        with open(self.registry, "a") as fh:
+            fh.write("lonely:\n  key: GitHub personal\n  name: Nobody\n")
+        hosts, problems = ssh1p.load_registry(self.registry)
+        self.assertEqual([h["alias"] for h in hosts], ["github-personal", "github-work", "lonely"])
+        self.assertEqual(hosts[2]["name"], "")
+        self.assertTrue(any("name: without email:" in p for p in problems))
+
+
+class CommitSigning(Base):
+    PERSONAL = "github-personal:\n  hostname: github.com\n  user: git\n  key: GitHub personal\n  email: me@home.example\n"
+    WORK = "github-work:\n  hostname: github.com\n  user: git\n  key: GitHub work\n  email: me@work.example\n  name: Work Me\n"
+    IDENT = ".config/ssh-1password/git/github-work.gitconfig"
+    ALLOWED = ".config/ssh-1password/allowed_signers"
+
+    def setUp(self):
+        super().setUp()
+        self.write_registry(self.PERSONAL + self.WORK + "  sign: manual\n")
+
+    def write_registry(self, text):
+        with open(self.registry, "w") as fh:
+            fh.write(text)
+
+    def probe(self, url, key):
+        env = self.env()
+        with tempfile.TemporaryDirectory() as tmp:
+            ssh1p.git_run(env, "init", "-q", cwd=tmp)
+            ssh1p.git_run(env, "remote", "add", "origin", url, cwd=tmp)
+            _rc, value = ssh1p.git_run(env, "config", "--get", key, cwd=tmp)
+        return value.strip()
+
+    def test_manual_then_always(self):
+        rc, out = self.run_install()
+        self.assertEqual(rc, 0)
+        ident = self.read(self.IDENT)
+        self.assertIn(f"[user]\n\temail = me@work.example\n\tname = Work Me\n\tsigningkey = ssh-ed25519 {blob('work')}\n"
+                      f"[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tprogram = {self.signer}\n"
+                      "\tallowedSignersFile = ~/.config/ssh-1password/allowed_signers\n", ident)
+        self.assertNotIn("gpgsign", ident)
+        self.assertNotIn("signingkey", self.read(".config/ssh-1password/git/github-personal.gitconfig"))
+        self.assertEqual(self.read(self.ALLOWED).splitlines()[1:], [f'me@work.example namespaces="git" ssh-ed25519 {blob("work")}'])
+        self.assertEqual(self.mode(self.ALLOWED), 0o644)
+        self.assertIn("Signing key", out)
+        url = "git@github-work:org/repo.git"
+        self.assertEqual(self.probe(url, "user.signingkey"), f"ssh-ed25519 {blob('work')}")
+        self.assertEqual(self.probe(url, "gpg.format"), "ssh")
+        self.assertEqual(self.probe(url, "commit.gpgsign"), "")
+        self.assertEqual(self.probe("git@github-personal:org/repo.git", "gpg.format"), "")
+
+        self.write_registry(self.PERSONAL + self.WORK + "  sign: always\n")
+        self.run_install()
+        self.assertIn("[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n", self.read(self.IDENT))
+        self.assertEqual(self.probe(url, "commit.gpgsign"), "true")
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("signs with 'GitHub work' (always)", out)
+
+    def test_dedicated_signing_key(self):
+        self.write_registry(self.PERSONAL + self.WORK + "  sign: manual\n  signing_key: Signing work\n")
+        self.run_install()
+        self.assertEqual(sorted(os.listdir(os.path.join(self.home, ".ssh/1password"))),
+                         ["github-personal.pub", "github-work.pub", "signing-work.pub"])
+        self.assertIn('item = "Signing work"', self.read(".config/1Password/ssh/agent.toml"))
+        self.assertIn(f"signingkey = ssh-ed25519 {blob('sign')}", self.read(self.IDENT))
+        self.assertIn("Host github-work\n    HostName github.com\n    User git\n    IdentityFile ~/.ssh/1password/github-work.pub",
+                      self.read(".ssh/config.d/1password.conf"))
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("signs with 'Signing work' (manual)", out)
+
+    def test_signer_missing(self):
+        ssh1p.signer_path = lambda: None
+        _rc, out = self.run_install()
+        self.assertIn("WARN   github-work: op-ssh-sign not found", out)
+        ident = self.read(self.IDENT)
+        self.assertIn("email = me@work.example", ident)
+        self.assertNotIn("signingkey", ident)
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL github-work: op-ssh-sign not found", out)
+
+    def test_signing_key_not_offered(self):
+        self.write_registry(self.PERSONAL + self.WORK + "  sign: manual\n  signing_key: Nope\n")
+        _rc, out = self.run_install()
+        self.assertIn("Nope: the agent does not offer it", out)
+        self.assertIn("signing key 'Nope' is not offered", out)
+        ident = self.read(self.IDENT)
+        self.assertIn("email = me@work.example", ident)
+        self.assertNotIn("signingkey", ident)
+        self.assertFalse(os.path.exists(os.path.join(self.home, self.ALLOWED)))
+
+    def test_allowed_signers_two_emails_share_a_key(self):
+        self.write_registry(self.PERSONAL + self.WORK + "  sign: manual\n"
+                            "github-other:\n  hostname: github.com\n  user: git\n  key: GitHub work\n  email: other@work.example\n  sign: always\n")
+        self.run_install()
+        lines = self.read(self.ALLOWED).splitlines()
+        self.assertTrue(lines[0].startswith("# generated by ssh-1password.py"))
+        self.assertEqual(lines[1:], [f'me@work.example namespaces="git" ssh-ed25519 {blob("work")}',
+                                     f'other@work.example namespaces="git" ssh-ed25519 {blob("work")}'])
+
+    def test_signing_removed(self):
+        self.run_install()
+        self.write_registry(self.PERSONAL + self.WORK)
+        _rc, out = self.run_install()
+        self.assertIn("remove ~/.config/ssh-1password/allowed_signers", out)
+        self.assertFalse(os.path.exists(os.path.join(self.home, self.ALLOWED)))
+        self.assertNotIn("signingkey", self.read(self.IDENT))
+        self.assertEqual(self.probe("git@github-work:org/repo.git", "gpg.format"), "")
+
+    def test_dry_run_and_repeat_run(self):
+        _rc, out = self.run_install(dry=True)
+        self.assertIn(f"signingkey = ssh-ed25519 {blob('work')}", out)
+        self.assertIn('namespaces="git"', out)
+        self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password")))
+        self.run_install()
+        _rc, out = self.run_install()
+        self.assertIn("github-work.gitconfig (no changes)", out)
+        self.assertIn("allowed_signers (no changes)", out)
+        self.assertNotIn("update", out)
+
+    # --- doctor ----------------------------------------------------------------------------
+
+    def test_doctor_detects_replaced_key(self):
+        self.run_install()
+        with open(self.fake_out, "w") as fh:  # the "GitHub work" item now holds another key
+            fh.write(f"ssh-ed25519 {blob('personal')} GitHub personal\nssh-ed25519 {blob('rotated')} GitHub work\n")
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL github-work: the signing key changed in 1Password", out)
+        self.assertIn("run install", out)
+        self.run_install()
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f'me@work.example namespaces="git" ssh-ed25519 {blob("rotated")}', self.read(self.ALLOWED))
+
+    def test_doctor_detects_missing_allowed_signer_line(self):
+        self.run_install()
+        with open(os.path.join(self.home, self.ALLOWED), "w") as fh:
+            fh.write("# generated by ssh-1password.py\n")
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 1)
+        self.assertIn("allowed_signers lacks this identity", out)
+
+    def test_doctor_detects_signer_removed_after_install(self):
+        self.run_install()
+        ssh1p.signer_path = lambda: None
+        rc, out = self.run_doctor()
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL github-work: op-ssh-sign not found", out)
 
 
 if __name__ == "__main__":

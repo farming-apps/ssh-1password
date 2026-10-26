@@ -19,6 +19,19 @@ Registry format (flat YAML, PyYAML optional):
     port: 22                    # optional
     key: GitHub work            # required: title of the SSH key item in 1Password, or SHA256:fingerprint
     vault: Work                 # optional: only for keys outside the Personal/Private/Employee vaults
+    email: me@work.example      # optional: git identity for repos whose remote uses this alias
+    name: My Name               # optional, with email
+    sign: manual                # optional, with email: always | manual (SSH commit signing via 1Password)
+    signing_key: Signing work   # optional, with sign: a dedicated 1Password key item (default: key)
+
+Git identity: for each host with email, install writes ~/.config/ssh-1password/git/<alias>.gitconfig
+and global `includeIf "hasconfig:remote.*.url:<user>@<alias>:*/**"` entries (git 2.36+), so commits in repos
+cloned through that alias use that email/name without per-repo configuration.
+
+Commit signing: with sign, the same file also sets gpg.format=ssh, 1Password's op-ssh-sign as the
+signing program, user.signingkey (the public key line) and an allowed_signers file for verification.
+`always` turns commit.gpgsign/tag.gpgsign on; `manual` leaves signing to `git commit -S` or to a
+per-repository `commit.gpgsign true`. Upload the .pub to GitHub/GitLab as a "Signing key" yourself.
 
 Python 3.8+, standard library only. Never run it from an AI agent session: it writes under ~/.ssh.
 """
@@ -65,6 +78,8 @@ class Env:
         self.registry = registry or (os.environ.get("SSH_1P_HOSTS") if self.real_home else None) \
             or os.path.join(config_home, "ssh-1password", "hosts.yml")
         self.agent_toml = os.path.join(config_home, "1Password", "ssh", "agent.toml")
+        self.git_dir = os.path.join(config_home, "ssh-1password", "git")
+        self.allowed_signers = os.path.join(config_home, "ssh-1password", "allowed_signers")
         if PLATFORM == "darwin":
             self.sock_tilde = "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
         else:
@@ -83,13 +98,29 @@ def app_installed():
     return bool(shutil.which("1password")) or os.path.isdir("/opt/1Password")
 
 
+def signer_candidates():
+    if PLATFORM == "darwin":
+        return ["/Applications/1Password.app/Contents/MacOS/op-ssh-sign",
+                os.path.expanduser("~/Applications/1Password.app/Contents/MacOS/op-ssh-sign")]
+    return ["/opt/1Password/op-ssh-sign"]
+
+
+def signer_path():
+    """op-ssh-sign shipped inside the 1Password app, or None. Tests replace this function."""
+    for cand in signer_candidates():
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
 def say(*parts):
     print(" ".join(str(p) for p in parts))
 
 
 # --- registry ---------------------------------------------------------------------------------
 
-FIELDS = ("hostname", "user", "port", "key", "vault")
+FIELDS = ("hostname", "user", "port", "key", "vault", "email", "name", "sign", "signing_key")
+SIGN_MODES = ("always", "manual")
 
 
 def _unquote(v):
@@ -152,18 +183,33 @@ def load_registry(path):
         if not host["key"]:
             problems.append(f"{alias}: missing key: (title of the 1Password item); entry skipped")
             continue
+        if host["name"] and not host["email"]:
+            problems.append(f"{alias}: name: without email: is ignored (git identity needs the email)")
+            host["name"] = ""
+        if host["sign"] and host["sign"] not in SIGN_MODES:
+            problems.append(f"{alias}: sign: must be {' or '.join(SIGN_MODES)}, not '{host['sign']}'; ignored")
+            host["sign"] = ""
+        elif host["sign"] and not host["email"]:
+            problems.append(f"{alias}: sign: without email: is ignored (commit signing needs the email)")
+            host["sign"] = ""
+        if host["signing_key"] and not host["sign"]:
+            problems.append(f"{alias}: signing_key: without sign: is ignored")
+            host["signing_key"] = ""
         hosts.append(host)
     return hosts, problems
 
 
 def distinct_keys(hosts):
-    """Key specs in first-seen order, each with the vault of its first mention."""
+    """Key specs (authentication and signing) in first-seen order, each with the vault of its first mention."""
     seen = {}
     for h in hosts:
-        if h["key"] not in seen:
-            seen[h["key"]] = h["vault"]
-        elif h["vault"] and not seen[h["key"]]:
-            seen[h["key"]] = h["vault"]
+        for spec in (h["key"], h["signing_key"]):
+            if not spec:
+                continue
+            if spec not in seen:
+                seen[spec] = h["vault"]
+            elif h["vault"] and not seen[spec]:
+                seen[spec] = h["vault"]
     return list(seen.items())
 
 
@@ -243,8 +289,10 @@ def render_conf(env, hosts):
 
 
 def render_agent_toml(env, hosts):
+    """agent.toml content, or None when it would hold no entry (an empty allowlist hides every key)."""
     out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run install)",
            "# Only the keys listed here are offered to SSH servers, in this order."]
+    entries = 0
     for spec, vault in distinct_keys(hosts):
         if spec.startswith("SHA256:"):
             continue  # agent.toml matches by item title or id, not by fingerprint
@@ -252,7 +300,8 @@ def render_agent_toml(env, hosts):
         out.append(f'item = "{spec}"')
         if vault:
             out.append(f'vault = "{vault}"')
-    return "\n".join(out) + "\n"
+        entries += 1
+    return "\n".join(out) + "\n" if entries else None
 
 
 def is_ours(path):
@@ -282,6 +331,204 @@ def include_present(env):
             if fnmatch.fnmatch(env.conf, pat):
                 return True
     return False
+
+
+# --- git identity per alias --------------------------------------------------------------------
+
+def git_run(env, *args, cwd=None):
+    """Runs git with HOME pointing at env.home so --global lands in the right place. (rc, stdout)."""
+    sub_env = dict(os.environ, HOME=env.home)
+    if not env.real_home:
+        sub_env.pop("XDG_CONFIG_HOME", None)
+        sub_env.pop("GIT_CONFIG_GLOBAL", None)
+    try:
+        r = subprocess.run(["git", *args], env=sub_env, cwd=cwd, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None, ""
+    return r.returncode, r.stdout
+
+
+def git_supports_hasconfig(env):
+    rc, out = git_run(env, "--version")
+    m = re.search(r"(\d+)\.(\d+)", out or "")
+    if rc is None or not m:
+        return None
+    return (int(m.group(1)), int(m.group(2))) >= (2, 36)
+
+
+def url_patterns(host):
+    """Remote URL globs that mean "cloned through this alias", for includeIf hasconfig.
+    git matches them with pathname semantics: `*` never crosses a `/`, and `**` only does so as a
+    whole path component. Hence `alias:*/**` for org/repo and `alias:*` for a flat repo name."""
+    pats = []
+    for word in host["alias"].split():
+        prefixes = [f"{host['user']}@{word}", word] if host["user"] else [word]
+        for p in prefixes:
+            pats += [f"{p}:*/**", f"{p}:*", f"ssh://{p}/**"]
+    return pats
+
+
+def identity_file(env, host):
+    return os.path.join(env.git_dir, slug(host["alias"]) + ".gitconfig")
+
+
+def signing_spec(host):
+    return host["signing_key"] or host["key"]
+
+
+def signing_pub(env, host, keys):
+    """`keytype blob` of the host's signing key: what the agent offers now, else the .pub on disk; None if neither."""
+    spec = signing_spec(host)
+    found = match_key(spec, keys) if keys else []
+    if len(found) == 1:
+        return f"{found[0][0]} {found[0][1]}"
+    local = read_pub(os.path.join(env.pub_dir, slug(spec) + ".pub"))
+    return f"{local[0]} {local[1]}" if local else None
+
+
+def resolve_signing(env, host, keys):
+    """({"key": pub line, "program": signer}, None) for a signing host, or (None, why) when it cannot sign yet."""
+    if not host["sign"]:
+        return None, None
+    program = signer_path()
+    if not program:
+        return None, f"op-ssh-sign not found (expected at {signer_candidates()[0]}); signing settings skipped"
+    pub = signing_pub(env, host, keys)
+    if not pub:
+        return None, f"signing key '{signing_spec(host)}' is not offered by the agent and has no .pub; signing settings skipped"
+    return {"key": pub, "program": program}, None
+
+
+def render_identity(env, host, signing=None):
+    out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run install)",
+           "[user]", f"\temail = {host['email']}"]
+    if host["name"]:
+        out.append(f"\tname = {host['name']}")
+    if signing:
+        out += [f"\tsigningkey = {signing['key']}",
+                "[gpg]", "\tformat = ssh",
+                '[gpg "ssh"]', f"\tprogram = {signing['program']}",
+                f"\tallowedSignersFile = {env.tilde(env.allowed_signers)}"]
+        if host["sign"] == "always":
+            out += ["[commit]", "\tgpgsign = true", "[tag]", "\tgpgsign = true"]
+    return "\n".join(out) + "\n"
+
+
+def render_allowed_signers(env, hosts, keys):
+    """allowed_signers content (one `<email> namespaces="git" <key>` line per signing identity), or None."""
+    lines = []
+    for h in hosts:
+        pub = signing_pub(env, h, keys) if h["sign"] else None
+        if pub:
+            line = f'{h["email"]} namespaces="git" {pub}'
+            if line not in lines:
+                lines.append(line)
+    if not lines:
+        return None
+    header = f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run install)"
+    return header + "\n" + "\n".join(lines) + "\n"
+
+
+def wanted_includes(env, hosts):
+    """{condition: identity file} for every host with an email."""
+    wanted = {}
+    for h in hosts:
+        if h["email"]:
+            for p in url_patterns(h):
+                wanted[f"hasconfig:remote.*.url:{p}"] = identity_file(env, h)
+    return wanted
+
+
+def current_includes(env):
+    """{condition: path} of the global includeIf entries that point into our git dir; None if git fails."""
+    rc, out = git_run(env, "config", "--global", "-z", "--get-regexp", r"^includeif\..*\.path$")
+    if rc not in (0, 1):
+        return None
+    found = {}
+    for entry in out.split("\0"):
+        if "\n" not in entry:
+            continue
+        key, value = entry.split("\n", 1)
+        cond = key[len("includeif."):-len(".path")]
+        if os.path.abspath(os.path.expanduser(value)).startswith(env.git_dir + os.sep):
+            found[cond] = value
+    return found
+
+
+def sync_allowed_signers(env, hosts, keys):
+    content = render_allowed_signers(env, hosts, keys)
+    if content:
+        write_text(env, env.allowed_signers, content, 0o644, show=env.dry)
+    elif os.path.exists(env.allowed_signers) and is_ours(env.allowed_signers):
+        say(f"  remove {env.tilde(env.allowed_signers)} (no host signs any more)")
+        if not env.dry:
+            os.remove(env.allowed_signers)
+
+
+def sync_git_identities(env, hosts, keys):
+    wanted = wanted_includes(env, hosts)
+    support = git_supports_hasconfig(env)
+    if support is None:
+        say("  WARN   git not found; identities skipped")
+        return
+    if not support:
+        say("  WARN   git < 2.36 has no includeIf hasconfig; identities skipped")
+        return
+    current = current_includes(env)
+    if current is None:
+        say("  WARN   could not read the global git config; identities skipped")
+        return
+    sync_allowed_signers(env, hosts, keys)
+    if not wanted and not current:
+        say("  skip   no email: in the registry")
+        return
+    for h in hosts:
+        if h["email"]:
+            signing, why = resolve_signing(env, h, keys)
+            if why:
+                say(f"  WARN   {h['alias']}: {why}")
+            write_text(env, identity_file(env, h), render_identity(env, h, signing), 0o600, show=env.dry)
+    for cond, path in wanted.items():
+        if current.get(cond) == path:
+            continue
+        say(f"  set    git includeIf \"{cond}\" -> {env.tilde(path)}")
+        if not env.dry:
+            git_run(env, "config", "--global", "--replace-all", f"includeIf.{cond}.path", path)
+    for cond in current:
+        if cond not in wanted:
+            say(f"  unset  git includeIf \"{cond}\"")
+            if not env.dry:
+                git_run(env, "config", "--global", "--unset-all", f"includeIf.{cond}.path")
+    if os.path.isdir(env.git_dir):
+        for name in sorted(os.listdir(env.git_dir)):
+            path = os.path.join(env.git_dir, name)
+            if name.endswith(".gitconfig") and path not in wanted.values():
+                say(f"  remove {env.tilde(path)} (alias no longer has an email)")
+                if not env.dry:
+                    os.remove(path)
+    if wanted and all(current.get(c) == p for c, p in wanted.items()):
+        say(f"  ok     git identities for {len(set(wanted.values()))} alias(es) (no changes)")
+
+
+PROBE_KEYS = ("user.email", "user.name", "user.signingkey", "gpg.format", "gpg.ssh.program", "commit.gpgsign")
+
+
+def probe_identity(env, host):
+    """Clones nothing: a throwaway repo whose remote uses the alias, then asks git how it would commit there.
+    Returns {config key: value} for PROBE_KEYS (missing keys -> ""), or None if git init fails."""
+    import tempfile
+    user = f"{host['user']}@" if host["user"] else ""
+    url = f"{user}{host['alias'].split()[0]}:probe/probe.git"
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, _ = git_run(env, "init", "-q", cwd=tmp)
+        if rc != 0:
+            return None
+        git_run(env, "remote", "add", "origin", url, cwd=tmp)
+        probe = {}
+        for key in PROBE_KEYS:
+            _rc, value = git_run(env, "config", "--get", key, cwd=tmp)
+            probe[key] = (value or "").strip()
+    return probe
 
 
 # --- file writing ------------------------------------------------------------------------------
@@ -409,6 +656,8 @@ def cmd_install(env):
     toml = render_agent_toml(env, hosts)
     if not hosts:
         say("  skip   no keys registered; an empty agent.toml would hide every key")
+    elif toml is None:
+        say("  WARN   every registered key is a SHA256: fingerprint; agent.toml needs item titles, so it is not written (an empty allowlist would hide every key)")
     elif os.path.exists(env.agent_toml) and not is_ours(env.agent_toml):
         existing = read_text(env.agent_toml) or ""
         missing = [s for s, _v in distinct_keys(hosts) if not s.startswith("SHA256:") and f'"{s}"' not in existing]
@@ -422,6 +671,11 @@ def cmd_install(env):
         created = not os.path.exists(env.agent_toml)
         if write_text(env, env.agent_toml, toml, 0o600, show=env.dry) and created:
             say("         new file: lock and unlock 1Password once so the agent picks it up")
+
+    say("6. git identity and commit signing per alias (includeIf hasconfig:remote.*.url)")
+    sync_git_identities(env, hosts, keys if status == "ok" else [])
+    if any(h["sign"] for h in hosts):
+        say("         signing: upload the .pub to GitHub/GitLab as a *Signing key* (not only Authentication) and approve 'git' in 1Password on first use")
 
     say("Next: ssh-1password.py doctor   ·   test: ssh -T git@<alias>")
     return 0
@@ -577,6 +831,61 @@ def cmd_doctor(env):
             rep.warn(f"{env.tilde(env.agent_toml)} ({owner}) does not list: {', '.join(missing)}")
         else:
             rep.ok(f"{env.tilde(env.agent_toml)} ({owner}) lists every registered key")
+
+    say("git identity")
+    with_email = [h for h in hosts if h["email"]]
+    if not with_email:
+        rep.ok("no email: in the registry (git identity not managed)")
+    elif not git_supports_hasconfig(env):
+        rep.warn("git missing or older than 2.36: includeIf hasconfig unavailable, identities not applied")
+    else:
+        current = current_includes(env) or {}
+        wanted = wanted_includes(env, hosts)
+        missing = [c for c, p in wanted.items() if current.get(c) != p]
+        if missing:
+            rep.fail(f"{len(missing)} includeIf entr{'y is' if len(missing) == 1 else 'ies are'} missing in the global git config (run install)")
+        agent_now = keys if status == "ok" else []
+        allowed = read_text(env.allowed_signers) or ""
+        for h in with_email:
+            alias, path = h["alias"], identity_file(env, h)
+            signing, why = resolve_signing(env, h, agent_now)
+            if why:
+                rep.fail(f"{alias}: {why}")
+                continue
+            on_disk = read_text(path)
+            if on_disk != render_identity(env, h, signing):
+                if signing and on_disk and "signingkey = " in on_disk and signing["key"] not in on_disk:
+                    rep.fail(f"{alias}: the signing key changed in 1Password; {env.tilde(path)} holds the old one "
+                             "(run install, then upload the new .pub to GitHub/GitLab as a Signing key)")
+                else:
+                    rep.fail(f"{alias}: {env.tilde(path)} missing or out of date (run install)")
+                continue
+            probe = probe_identity(env, h)
+            if probe is None:
+                rep.warn(f"{alias}: could not probe (git init failed)")
+                continue
+            if probe["user.email"] != h["email"] or (h["name"] and probe["user.name"] != h["name"]):
+                rep.fail(f"{alias}: a repo with this remote would commit as '{probe['user.name']} <{probe['user.email']}>' instead of the registry identity")
+                continue
+            if not signing:
+                rep.ok(f"{alias}: repos cloned through this alias commit as <{h['email']}>")
+                continue
+            wrong = []
+            if probe["gpg.format"] != "ssh":
+                wrong.append(f"gpg.format is '{probe['gpg.format']}'")
+            if probe["user.signingkey"] != signing["key"]:
+                wrong.append("user.signingkey is not the key the agent offers")
+            if probe["gpg.ssh.program"] != signing["program"]:
+                wrong.append(f"gpg.ssh.program is '{probe['gpg.ssh.program']}'")
+            want_gpgsign = "true" if h["sign"] == "always" else ""
+            if probe["commit.gpgsign"] != want_gpgsign:
+                wrong.append(f"commit.gpgsign is '{probe['commit.gpgsign']}' (sign: {h['sign']})")
+            if f'{h["email"]} namespaces="git" {signing["key"]}' not in allowed:
+                wrong.append(f"{env.tilde(env.allowed_signers)} lacks this identity (run install)")
+            if wrong:
+                rep.fail(f"{alias}: " + "; ".join(wrong))
+            else:
+                rep.ok(f"{alias}: commits as <{h['email']}>, signs with '{signing_spec(h)}' ({h['sign']})")
 
     say("")
     if rep.fails == 0:
