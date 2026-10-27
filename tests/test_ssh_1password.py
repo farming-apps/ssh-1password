@@ -215,17 +215,32 @@ class Install(Base):
 
     def test_agent_unreachable_still_writes_config(self):
         ssh1p.SSH_ADD = [sys.executable, "-I", FAKE_SSH_ADD, self.fake_out, "2"]
-        _rc, out = self.run_install()
+        rc, out = self.run_install()
         self.assertIn("Use the SSH agent", out)
         self.assertTrue(os.path.exists(os.path.join(self.home, ".ssh/config.d/1password.conf")))
         self.assertFalse(os.path.exists(os.path.join(self.home, ".ssh/1password")))
+        # without the .pub files ssh offers no key (IdentitiesOnly): install must not look successful
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL   GitHub work: ~/.ssh/1password/github-work.pub missing", out)
+        self.assertIn("install: 2 key(s) without .pub", out)
+
+    def test_agent_unreachable_keeps_existing_pubs(self):
+        self.assertEqual(self.run_install()[0], 0)
+        ssh1p.SSH_ADD = [sys.executable, "-I", FAKE_SSH_ADD, self.fake_out, "2"]
+        rc, out = self.run_install()
+        self.assertEqual(rc, 0)
+        self.assertIn("(keeping existing .pub)", out)
+        self.assertNotIn("FAIL", out)
 
     def test_duplicate_title_and_unknown_key(self):
         with open(self.registry, "a") as fh:
             fh.write("dup:\n  key: Twice\nmissing:\n  key: Nope\n")
-        _rc, out = self.run_install()
+        rc, out = self.run_install()
         self.assertIn("2 items share this title", out)
         self.assertIn("Nope: the agent does not offer it", out)
+        self.assertEqual(rc, 1)
+        self.assertIn("install: 2 key(s) without .pub", out)
+        self.assertNotIn("FAIL   GitHub work", out)
 
     def test_fingerprint_spec(self):
         fp = ssh1p.fingerprint(blob("work"))

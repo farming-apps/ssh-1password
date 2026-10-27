@@ -24,6 +24,9 @@ ssh -T git@github-work                       # 1Password asks once; GitHub answe
 
 Re-run `install` whenever you edit the registry or rename a key in 1Password. It is idempotent:
 unchanged files are reported as `no changes`, and `--dry-run` shows everything it would write.
+It exits 1 when a registered key ends up without its `.pub` (1Password locked or closed, item
+renamed, duplicate title): the generated config uses `IdentitiesOnly yes`, so ssh would offer no key
+for those hosts. Every other step still runs.
 
 ## The registry: `~/.config/ssh-1password/hosts.yml`
 
@@ -194,6 +197,7 @@ entry of yours overriding it is caught); `agent.toml` lists every registered key
 | `Could not open a connection to your authentication agent` | agent toggle off, or wrong socket path; `doctor` shows which |
 | `Too many authentication failures` | a `Host *` of yours adds more `IdentityFile`s, or `agent.toml` missing; `doctor` runs `ssh -G` |
 | `agent refused operation` | approval denied or 1Password locked; check the tray icon |
+| `no such identity: ~/.ssh/1password/<slug>.pub`, then `Permission denied (publickey)` | `install` ran while 1Password was locked or closed, so the `.pub` was never written (`install` exits 1, `doctor` reports it missing): unlock 1Password and re-run `install` |
 | `Permission denied (publickey)` with the right alias | the `.pub` on the server is not the one 1Password offers, or the local `.pub` is stale because you replaced the key in 1Password (`doctor` reports it as rotated): re-run `install`, then compare fingerprints |
 | Key not offered although it exists in 1Password | item in a non-default vault: add `vault:` and re-run `install` |
 | Command hangs | pending approval: unlock 1Password |

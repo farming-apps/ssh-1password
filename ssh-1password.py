@@ -6,7 +6,8 @@ is left alone except for one Include line at the end, so anything you wrote abov
 
 Usage: ssh-1password.py install|doctor [--dry-run] [--file <hosts.yml>] [--home <dir>]
   install    copy the registry template if missing, fetch public keys from the agent, write
-             ~/.ssh/config.d/1password.conf, include it from ~/.ssh/config, keep agent.toml in sync
+             ~/.ssh/config.d/1password.conf, include it from ~/.ssh/config, keep agent.toml in sync;
+             exits 1 when a registered key is left without its .pub
   doctor     check the setup on this machine; exits 1 on any FAIL
   --dry-run  show what install would write without touching anything
   --file     registry path (default: $SSH_1P_HOSTS or ~/.config/ssh-1password/hosts.yml)
@@ -628,9 +629,12 @@ def cmd_install(env):
         say(f"  ok     {len(hosts)} host(s), {len(distinct_keys(hosts))} key(s)")
 
     say("3. public keys from the agent")
+    no_pub = []                                  # keys left without a .pub: ssh refuses their hosts (IdentitiesOnly)
     for spec, _vault in distinct_keys(hosts):
         pub = os.path.join(env.pub_dir, slug(spec) + ".pub")
         found = match_key(spec, keys) if status == "ok" else []
+        if len(found) != 1 and not os.path.exists(pub):
+            no_pub.append((spec, pub))
         if status != "ok":
             say(f"  skip   {spec}: agent not available" + (" (keeping existing .pub)" if os.path.exists(pub) else ""))
         elif len(found) == 1:
@@ -677,6 +681,13 @@ def cmd_install(env):
     if any(h["sign"] for h in hosts):
         say("         signing: upload the .pub to GitHub/GitLab as a *Signing key* (not only Authentication) and approve 'git' in 1Password on first use")
 
+    if no_pub:
+        say("result")
+        for spec, pub in no_pub:
+            say(f"  FAIL   {spec}: {env.tilde(pub)} missing; ssh will refuse the hosts that use it (IdentitiesOnly)")
+        say("         unlock 1Password (or fix the item named above), then re-run install")
+        say(f"install: {len(no_pub)} key(s) without .pub")
+        return 1
     say("Next: ssh-1password.py doctor   ·   test: ssh -T git@<alias>")
     return 0
 
