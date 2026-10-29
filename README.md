@@ -96,8 +96,8 @@ Host cliente-acme
 Add `email:` (and optionally `name:`) to a host and every repository whose remote goes through that
 alias commits with that identity, with no per-repo `git config`. It relies on git's
 `includeIf "hasconfig:remote.*.url:<pattern>"` (git 2.36+): `install` registers the patterns
-`git@<alias>:*/**`, `git@<alias>:*` and `ssh://git@<alias>/**` for each alias (and the same without
-`git@`). git matches them with pathname globbing, so `**` only spans directories as a whole
+`git@<alias>:*/**`, `git@<alias>:*`, `ssh://git@<alias>/**` and `ssh://git@<alias>:*/**` (URLs with a
+port) for each alias (and the same without `git@`). git matches them with pathname globbing, so `**` only spans directories as a whole
 component; that is why both `:*/**` and `:*` are needed. The alias can be a real
 hostname (`github.com`), so existing clones keep working. `doctor` creates a throwaway repository
 with such a remote and checks who git would commit as, which catches a stray `user.email` in a

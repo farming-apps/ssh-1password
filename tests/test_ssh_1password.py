@@ -470,6 +470,8 @@ class GitIdentity(Base):
         self.assertEqual(self.probe("git@github-work:org/sub/repo.git"), "me@work.example")
         self.assertEqual(self.probe("plain:org/repo.git"), "plain@example")
         self.assertEqual(self.probe("ssh://plain/org/repo.git"), "plain@example")
+        self.assertEqual(self.probe("ssh://plain:2222/org/repo.git"), "plain@example")
+        self.assertEqual(self.probe("ssh://git@github-work:32222/org/sub/repo.git"), "me@work.example")
         self.assertEqual(self.probe("git@github-personal:org/repo.git"), "")
         self.assertNotIn("git@plain", self.gitconfig())  # no user: only bare patterns
 

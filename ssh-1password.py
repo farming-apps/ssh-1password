@@ -360,12 +360,13 @@ def git_supports_hasconfig(env):
 def url_patterns(host):
     """Remote URL globs that mean "cloned through this alias", for includeIf hasconfig.
     git matches them with pathname semantics: `*` never crosses a `/`, and `**` only does so as a
-    whole path component. Hence `alias:*/**` for org/repo and `alias:*` for a flat repo name."""
+    whole path component. Hence `alias:*/**` for org/repo and `alias:*` for a flat repo name, and
+    `ssh://alias:*/**` for ssh:// URLs that carry a port (`ssh://git@host:2222/org/repo.git`)."""
     pats = []
     for word in host["alias"].split():
         prefixes = [f"{host['user']}@{word}", word] if host["user"] else [word]
         for p in prefixes:
-            pats += [f"{p}:*/**", f"{p}:*", f"ssh://{p}/**"]
+            pats += [f"{p}:*/**", f"{p}:*", f"ssh://{p}/**", f"ssh://{p}:*/**"]
     return pats
 
 
