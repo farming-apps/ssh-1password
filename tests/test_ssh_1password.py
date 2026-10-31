@@ -3,10 +3,12 @@
 so nothing under the real ~/.ssh is read or written.  Run: python3 -I tests/test_ssh_1password.py"""
 import base64
 import contextlib
+import importlib.machinery
 import importlib.util
 import io
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -321,6 +323,25 @@ class Install(Base):
         self.assertIn("no hosts registered yet", buf.getvalue())
         self.assertIn("an empty agent.toml would hide every key", buf.getvalue())
         self.assertIn("Host *", self.read(".ssh/config.d/1password.conf"))
+
+
+class Packaging(unittest.TestCase):
+    SCRIPT = os.path.join(ROOT, "ssh-1password.py")
+
+    def test_version_flag(self):
+        for flag in ("--version", "-V"):
+            out = subprocess.run([sys.executable, "-I", self.SCRIPT, flag], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0)
+            self.assertEqual(out.stdout.strip(), f"ssh-1password {ssh1p.__version__}")
+
+    def test_template_found_through_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            link = os.path.join(tmp, "ssh-1password")
+            os.symlink(self.SCRIPT, link)
+            loader = importlib.machinery.SourceFileLoader("ssh1p_link", link)
+            mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("ssh1p_link", loader))
+            loader.exec_module(mod)
+            self.assertTrue(os.path.isfile(mod.TEMPLATE), mod.TEMPLATE)
 
 
 class Doctor(Base):

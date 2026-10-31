@@ -8,6 +8,27 @@ something drifted.
 
 One script, Python 3.8+ standard library, macOS and Linux. No `op` CLI needed.
 
+## Install
+
+Download a release, verify it, and put the script on your `PATH` (replace `0.1.0` with the
+[latest release](https://github.com/milyzc/ssh-1password-integration/releases/latest)):
+
+```sh
+v=0.1.0
+base=https://github.com/milyzc/ssh-1password-integration/releases/download/v$v
+curl -fLO "$base/ssh-1password-$v.tar.gz" -fLO "$base/SHA256SUMS"
+shasum -a 256 -c SHA256SUMS                  # must print "OK"
+mkdir -p ~/.local/share ~/.local/bin
+tar xzf "ssh-1password-$v.tar.gz" -C ~/.local/share
+ln -sf ~/.local/share/ssh-1password-$v/ssh-1password.py ~/.local/bin/ssh-1password
+export PATH="$HOME/.local/bin:$PATH"       # also add this to your shell startup file
+ssh-1password --version
+```
+
+The tarball holds `ssh-1password.py`, `templates/hosts.yml`, `README.md` and `LICENSE`; keep them
+together (the symlink is fine). To upgrade, repeat with the new version. Cloning the repo and running
+`python3 -I ssh-1password.py` works the same way; the Quick start below uses that form.
+
 ## Quick start
 
 1. Install the 1Password app and enable **Settings → Developer → Use the SSH agent**.
@@ -211,3 +232,14 @@ entry of yours overriding it is caught); `agent.toml` lists every registered key
 python3 -I tests/test_ssh_1password.py      # runs against a temporary --home and a fake ssh-add
 python3 -I ssh-1password.py install --dry-run --home /tmp/fake-home --file templates/hosts.yml
 ```
+
+## Releasing
+
+1. Bump `__version__` in `ssh-1password.py` and merge to `main`.
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+3. The `release` workflow runs the tests, checks that the tag matches `__version__`, and publishes
+   `ssh-1password-<version>.tar.gz` plus `SHA256SUMS` as a GitHub Release.
+
+## License
+
+[MIT](LICENSE)

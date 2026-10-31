@@ -1,0 +1,50 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check tag matches __version__
+        id: version
+        run: |
+          version="$(python3 -I ssh-1password.py --version | cut -d' ' -f2)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match __version__ $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build tarball and checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          name="ssh-1password-$VERSION"
+          mkdir dist
+          git archive --format=tar.gz --prefix="$name/" -o "dist/$name.tar.gz" HEAD \
+            ssh-1password.py templates/hosts.yml README.md LICENSE
+          (cd dist && sha256sum "$name.tar.gz" > SHA256SUMS)
+          tar tzf "dist/$name.tar.gz"
+          cat dist/SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
