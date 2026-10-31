@@ -4,13 +4,13 @@
 Private keys stay in 1Password; only public keys (.pub) are written to disk. Your own ~/.ssh/config
 is left alone except for one Include line at the end, so anything you wrote above it wins.
 
-Usage: ssh-1password.py install|doctor [--dry-run] [--file <hosts.yml>] [--home <dir>]
+Usage: ssh-1password.py sync|doctor [--dry-run] [--file <hosts.yml>] [--home <dir>]
        ssh-1password.py --version
-  install    copy the registry template if missing, fetch public keys from the agent, write
+  sync       copy the registry template if missing, fetch public keys from the agent, write
              ~/.ssh/config.d/1password.conf, include it from ~/.ssh/config, keep agent.toml in sync;
              exits 1 when a registered key is left without its .pub
   doctor     check the setup on this machine; exits 1 on any FAIL
-  --dry-run  show what install would write without touching anything
+  --dry-run  show what sync would write without touching anything
   --file     registry path (default: $SSH_1P_HOSTS or ~/.config/ssh-1password/hosts.yml)
   --home     treat this directory as the home directory (tests, inspection)
   --version  print the version and exit
@@ -27,7 +27,7 @@ Registry format (flat YAML, PyYAML optional):
     sign: manual                # optional, with email: always | manual (SSH commit signing via 1Password)
     signing_key: Signing work   # optional, with sign: a dedicated 1Password key item (default: key)
 
-Git identity: for each host with email, install writes ~/.config/ssh-1password/git/<alias>.gitconfig
+Git identity: for each host with email, sync writes ~/.config/ssh-1password/git/<alias>.gitconfig
 and global `includeIf "hasconfig:remote.*.url:<user>@<alias>:*/**"` entries (git 2.36+), so commits in repos
 cloned through that alias use that email/name without per-repo configuration.
 
@@ -275,7 +275,7 @@ def read_pub(path):
 # --- rendering ---------------------------------------------------------------------------------
 
 def render_conf(env, hosts):
-    out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run install)"]
+    out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run sync)"]
     for h in hosts:
         out.append(f"\nHost {h['alias']}")
         if h["hostname"]:
@@ -295,7 +295,7 @@ def render_conf(env, hosts):
 
 def render_agent_toml(env, hosts):
     """agent.toml content, or None when it would hold no entry (an empty allowlist hides every key)."""
-    out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run install)",
+    out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run sync)",
            "# Only the keys listed here are offered to SSH servers, in this order."]
     entries = 0
     for spec, vault in distinct_keys(hosts):
@@ -406,7 +406,7 @@ def resolve_signing(env, host, keys):
 
 
 def render_identity(env, host, signing=None):
-    out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run install)",
+    out = [f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run sync)",
            "[user]", f"\temail = {host['email']}"]
     if host["name"]:
         out.append(f"\tname = {host['name']}")
@@ -431,7 +431,7 @@ def render_allowed_signers(env, hosts, keys):
                 lines.append(line)
     if not lines:
         return None
-    header = f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run install)"
+    header = f"{GENERATED_MARK} from {env.tilde(env.registry)}; do not edit by hand (re-run sync)"
     return header + "\n" + "\n".join(lines) + "\n"
 
 
@@ -589,10 +589,10 @@ def _chmod(env, path, mode):
         say(f"  chmod  {env.tilde(path)} -> {oct(mode)}")
 
 
-# --- install -----------------------------------------------------------------------------------
+# --- sync --------------------------------------------------------------------------------------
 
-def cmd_install(env):
-    say(f"ssh-1password install (home: {env.home}{', dry-run: nothing is modified' if env.dry else ''})")
+def cmd_sync(env):
+    say(f"ssh-1password sync (home: {env.home}{', dry-run: nothing is modified' if env.dry else ''})")
 
     say("1. 1Password")
     if not app_installed():
@@ -610,7 +610,7 @@ def cmd_install(env):
         say("  WARN   ssh-add not found: install OpenSSH client tools")
     else:
         say(f"  WARN   SSH agent not reachable at {env.sock_tilde}")
-        say("         enable 1Password -> Settings -> Developer -> \"Use the SSH agent\", then re-run install")
+        say("         enable 1Password -> Settings -> Developer -> \"Use the SSH agent\", then re-run sync")
         say("         (continuing: the generated config is harmless without the agent)")
 
     say("2. registry")
@@ -629,7 +629,7 @@ def cmd_install(env):
     for p in problems:
         say(f"  WARN   {p}")
     if not hosts:
-        say(f"  WARN   no hosts registered yet: edit {env.tilde(env.registry)} and re-run install")
+        say(f"  WARN   no hosts registered yet: edit {env.tilde(env.registry)} and re-run sync")
     else:
         say(f"  ok     {len(hosts)} host(s), {len(distinct_keys(hosts))} key(s)")
 
@@ -690,8 +690,8 @@ def cmd_install(env):
         say("result")
         for spec, pub in no_pub:
             say(f"  FAIL   {spec}: {env.tilde(pub)} missing; ssh will refuse the hosts that use it (IdentitiesOnly)")
-        say("         unlock 1Password (or fix the item named above), then re-run install")
-        say(f"install: {len(no_pub)} key(s) without .pub")
+        say("         unlock 1Password (or fix the item named above), then re-run sync")
+        say(f"sync: {len(no_pub)} key(s) without .pub")
         return 1
     say("Next: ssh-1password.py doctor   ·   test: ssh -T git@<alias>")
     return 0
@@ -738,7 +738,7 @@ def cmd_doctor(env):
     if app_installed():
         rep.ok("1Password app installed")
     else:
-        rep.fail("1Password app not found (install it, then run install)")
+        rep.fail("1Password app not found (install it, then run sync)")
     status, keys = agent_keys(env)
     if status in ("ok", "empty"):
         rep.ok(f"SSH agent reachable at {env.sock_tilde} ({len(keys)} key(s) offered)")
@@ -750,10 +750,10 @@ def cmd_doctor(env):
     say("registry")
     hosts, problems = load_registry(env.registry)
     if hosts is None:
-        rep.fail(f"{env.tilde(env.registry)} does not exist (run install)")
+        rep.fail(f"{env.tilde(env.registry)} does not exist (run sync)")
         hosts, problems = [], []
     elif not hosts:
-        rep.warn(f"{env.tilde(env.registry)} has no hosts yet (edit it, then run install)")
+        rep.warn(f"{env.tilde(env.registry)} has no hosts yet (edit it, then run sync)")
     else:
         rep.ok(f"{env.tilde(env.registry)}: {len(hosts)} host(s), {len(distinct_keys(hosts))} key(s)")
     for p in problems:
@@ -763,16 +763,16 @@ def cmd_doctor(env):
     if include_present(env):
         rep.ok(f"{env.tilde(env.config)} includes {CONF_REL}")
     else:
-        rep.fail(f"{env.tilde(env.config)} does not include {CONF_REL} (run install)")
+        rep.fail(f"{env.tilde(env.config)} does not include {CONF_REL} (run sync)")
     try:
         current = read_text(env.conf)
     except OSError as e:
         current = None
         rep.warn(f"cannot read {env.tilde(env.conf)} ({e.strerror})")
     if current is None:
-        rep.fail(f"{env.tilde(env.conf)} missing (run install)")
+        rep.fail(f"{env.tilde(env.conf)} missing (run sync)")
     elif current != render_conf(env, hosts):
-        rep.fail(f"{env.tilde(env.conf)} is out of date with the registry (run install)")
+        rep.fail(f"{env.tilde(env.conf)} is out of date with the registry (run sync)")
     else:
         rep.ok(f"{env.tilde(env.conf)} matches the registry")
     for path in (env.config, env.conf):
@@ -788,7 +788,7 @@ def cmd_doctor(env):
         expected_pubs.add(os.path.basename(pub))
         local = read_pub(pub)
         if local is None:
-            rep.fail(f"{spec}: {env.tilde(pub)} missing (run install with 1Password unlocked)")
+            rep.fail(f"{spec}: {env.tilde(pub)} missing (run sync with 1Password unlocked)")
             continue
         if status != "ok":
             rep.warn(f"{spec}: {env.tilde(pub)} present; agent not available to confirm it")
@@ -796,7 +796,7 @@ def cmd_doctor(env):
         if any(k[1] == local[1] for k in keys):
             rep.ok(f"{spec}: {env.tilde(pub)} offered by the agent ({fingerprint(local[1])})")
         elif match_key(spec, keys):
-            rep.warn(f"{spec}: the agent offers a different key under this title; run install to refresh the .pub")
+            rep.warn(f"{spec}: the agent offers a different key under this title; run sync to refresh the .pub")
         else:
             rep.warn(f"{spec}: not offered by the agent (renamed, deleted, or its vault is not in agent.toml)")
     if os.path.isdir(env.pub_dir):
@@ -838,7 +838,7 @@ def cmd_doctor(env):
     if not hosts:
         rep.warn("no keys registered; agent.toml not checked")
     elif not os.path.exists(env.agent_toml):
-        rep.warn(f"{env.tilde(env.agent_toml)} missing: the agent offers every key in your default vaults (install creates it)")
+        rep.warn(f"{env.tilde(env.agent_toml)} missing: the agent offers every key in your default vaults (sync creates it)")
     else:
         text = read_text(env.agent_toml) or ""
         missing = [s for s, _v in distinct_keys(hosts) if not s.startswith("SHA256:") and f'"{s}"' not in text]
@@ -859,7 +859,7 @@ def cmd_doctor(env):
         wanted = wanted_includes(env, hosts)
         missing = [c for c, p in wanted.items() if current.get(c) != p]
         if missing:
-            rep.fail(f"{len(missing)} includeIf entr{'y is' if len(missing) == 1 else 'ies are'} missing in the global git config (run install)")
+            rep.fail(f"{len(missing)} includeIf entr{'y is' if len(missing) == 1 else 'ies are'} missing in the global git config (run sync)")
         agent_now = keys if status == "ok" else []
         allowed = read_text(env.allowed_signers) or ""
         for h in with_email:
@@ -872,9 +872,9 @@ def cmd_doctor(env):
             if on_disk != render_identity(env, h, signing):
                 if signing and on_disk and "signingkey = " in on_disk and signing["key"] not in on_disk:
                     rep.fail(f"{alias}: the signing key changed in 1Password; {env.tilde(path)} holds the old one "
-                             "(run install, then upload the new .pub to GitHub/GitLab as a Signing key)")
+                             "(run sync, then upload the new .pub to GitHub/GitLab as a Signing key)")
                 else:
-                    rep.fail(f"{alias}: {env.tilde(path)} missing or out of date (run install)")
+                    rep.fail(f"{alias}: {env.tilde(path)} missing or out of date (run sync)")
                 continue
             probe = probe_identity(env, h)
             if probe is None:
@@ -897,7 +897,7 @@ def cmd_doctor(env):
             if probe["commit.gpgsign"] != want_gpgsign:
                 wrong.append(f"commit.gpgsign is '{probe['commit.gpgsign']}' (sign: {h['sign']})")
             if f'{h["email"]} namespaces="git" {signing["key"]}' not in allowed:
-                wrong.append(f"{env.tilde(env.allowed_signers)} lacks this identity (run install)")
+                wrong.append(f"{env.tilde(env.allowed_signers)} lacks this identity (run sync)")
             if wrong:
                 rep.fail(f"{alias}: " + "; ".join(wrong))
             else:
@@ -918,7 +918,7 @@ def main(argv):
     args = list(argv)
     while args:
         a = args.pop(0)
-        if a in ("install", "doctor"):
+        if a in ("sync", "doctor"):
             cmd = a
         elif a == "--dry-run":
             dry = True
@@ -941,10 +941,10 @@ def main(argv):
             return 2
     if cmd is None:
         print(__doc__.strip().splitlines()[0], file=sys.stderr)
-        print("usage: ssh-1password.py install|doctor [--dry-run] [--file <hosts.yml>] [--home <dir>]", file=sys.stderr)
+        print("usage: ssh-1password.py sync|doctor [--dry-run] [--file <hosts.yml>] [--home <dir>]", file=sys.stderr)
         return 2
     env = Env(home, registry, dry)
-    return cmd_install(env) if cmd == "install" else cmd_doctor(env)
+    return cmd_sync(env) if cmd == "sync" else cmd_doctor(env)
 
 
 if __name__ == "__main__":

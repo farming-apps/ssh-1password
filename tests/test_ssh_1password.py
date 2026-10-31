@@ -82,9 +82,9 @@ class Base(unittest.TestCase):
     def env(self, dry=False):
         return ssh1p.Env(self.home, self.registry, dry)
 
-    def run_install(self, dry=False):
+    def run_sync(self, dry=False):
         with captured() as buf:
-            rc = ssh1p.cmd_install(self.env(dry))
+            rc = ssh1p.cmd_sync(self.env(dry))
         return rc, buf.getvalue()
 
     def run_doctor(self):
@@ -150,7 +150,7 @@ class Parsing(unittest.TestCase):
 
 class Install(Base):
     def test_full_install_then_idempotent(self):
-        rc, out = self.run_install()
+        rc, out = self.run_sync()
         self.assertEqual(rc, 0)
         conf = self.read(".ssh/config.d/1password.conf")
         self.assertIn("Host github-work\n    HostName github.com\n    User git\n"
@@ -172,7 +172,7 @@ class Install(Base):
         self.assertEqual(self.mode(".ssh/config.d/1password.conf"), 0o600)
         self.assertEqual(self.mode(".ssh/1password/github-work.pub"), 0o644)
 
-        rc, out = self.run_install()
+        rc, out = self.run_sync()
         self.assertEqual(rc, 0)
         self.assertNotIn("update", out)
         self.assertNotIn("create", out)
@@ -184,7 +184,7 @@ class Install(Base):
         os.makedirs(os.path.join(self.home, ".ssh"))
         with open(os.path.join(self.home, ".ssh/config"), "w") as fh:
             fh.write("Host cliente\n    HostName bastion.example\n    IdentityAgent none\n")
-        self.run_install()
+        self.run_sync()
         config = self.read(".ssh/config")
         self.assertTrue(config.startswith("Host cliente\n    HostName bastion.example\n    IdentityAgent none\n\n# ssh-1password"))
         self.assertIn("\nMatch all\nInclude config.d/1password.conf\n", config)
@@ -195,7 +195,7 @@ class Install(Base):
         os.makedirs(os.path.join(self.home, ".ssh"))
         with open(os.path.join(self.home, ".ssh/config"), "w") as fh:
             fh.write("Host x\n    User y\n\nInclude config.d/*.conf\n")
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertIn("already includes", out)
         self.assertNotIn("Match all", self.read(".ssh/config"))
 
@@ -204,12 +204,12 @@ class Install(Base):
         os.makedirs(os.path.dirname(path))
         with open(path, "w") as fh:
             fh.write('[[ssh-keys]]\nitem = "GitHub personal"\n')
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertEqual(self.read(".config/1Password/ssh/agent.toml"), '[[ssh-keys]]\nitem = "GitHub personal"\n')
         self.assertIn('item = "GitHub work"', out)  # snippet for the missing one
 
     def test_dry_run_writes_nothing(self):
-        rc, out = self.run_install(dry=True)
+        rc, out = self.run_sync(dry=True)
         self.assertEqual(rc, 0)
         self.assertIn("Include config.d/1password.conf", out)
         self.assertFalse(os.path.exists(os.path.join(self.home, ".ssh")))
@@ -217,19 +217,19 @@ class Install(Base):
 
     def test_agent_unreachable_still_writes_config(self):
         ssh1p.SSH_ADD = [sys.executable, "-I", FAKE_SSH_ADD, self.fake_out, "2"]
-        rc, out = self.run_install()
+        rc, out = self.run_sync()
         self.assertIn("Use the SSH agent", out)
         self.assertTrue(os.path.exists(os.path.join(self.home, ".ssh/config.d/1password.conf")))
         self.assertFalse(os.path.exists(os.path.join(self.home, ".ssh/1password")))
-        # without the .pub files ssh offers no key (IdentitiesOnly): install must not look successful
+        # without the .pub files ssh offers no key (IdentitiesOnly): sync must not look successful
         self.assertEqual(rc, 1)
         self.assertIn("FAIL   GitHub work: ~/.ssh/1password/github-work.pub missing", out)
-        self.assertIn("install: 2 key(s) without .pub", out)
+        self.assertIn("sync: 2 key(s) without .pub", out)
 
     def test_agent_unreachable_keeps_existing_pubs(self):
-        self.assertEqual(self.run_install()[0], 0)
+        self.assertEqual(self.run_sync()[0], 0)
         ssh1p.SSH_ADD = [sys.executable, "-I", FAKE_SSH_ADD, self.fake_out, "2"]
-        rc, out = self.run_install()
+        rc, out = self.run_sync()
         self.assertEqual(rc, 0)
         self.assertIn("(keeping existing .pub)", out)
         self.assertNotIn("FAIL", out)
@@ -237,29 +237,29 @@ class Install(Base):
     def test_duplicate_title_and_unknown_key(self):
         with open(self.registry, "a") as fh:
             fh.write("dup:\n  key: Twice\nmissing:\n  key: Nope\n")
-        rc, out = self.run_install()
+        rc, out = self.run_sync()
         self.assertIn("2 items share this title", out)
         self.assertIn("Nope: the agent does not offer it", out)
         self.assertEqual(rc, 1)
-        self.assertIn("install: 2 key(s) without .pub", out)
+        self.assertIn("sync: 2 key(s) without .pub", out)
         self.assertNotIn("FAIL   GitHub work", out)
 
     def test_fingerprint_spec(self):
         fp = ssh1p.fingerprint(blob("work"))
         with open(self.registry, "w") as fh:
             fh.write(f"w:\n  key: {fp}\n")
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertTrue(os.path.exists(os.path.join(self.home, ".ssh/1password", ssh1p.slug(fp) + ".pub")))
         # an allowlist with zero entries would hide every key: it must not be written
         self.assertFalse(os.path.exists(os.path.join(self.home, ".config/1Password/ssh/agent.toml")))
         self.assertIn("needs item titles", out)
 
     def test_fingerprint_only_does_not_rewrite_generated_toml(self):
-        self.run_install()  # generates agent.toml from titled keys
+        self.run_sync()  # generates agent.toml from titled keys
         before = self.read(".config/1Password/ssh/agent.toml")
         with open(self.registry, "w") as fh:
             fh.write(f"w:\n  key: {ssh1p.fingerprint(blob('work'))}\n")
-        self.run_install()
+        self.run_sync()
         self.assertEqual(self.read(".config/1Password/ssh/agent.toml"), before)
 
     # --- host-registry ---------------------------------------------------------------------
@@ -285,8 +285,8 @@ class Install(Base):
     def test_existing_registry_is_never_rewritten(self):
         with open(self.registry) as fh:
             before = fh.read()
-        self.run_install()
-        self.run_install()
+        self.run_sync()
+        self.run_sync()
         with open(self.registry) as fh:
             self.assertEqual(fh.read(), before)
 
@@ -294,7 +294,7 @@ class Install(Base):
 
     def test_app_missing_changes_nothing(self):
         ssh1p.app_installed = lambda: False
-        rc, out = self.run_install()
+        rc, out = self.run_sync()
         self.assertEqual(rc, 0)
         self.assertIn("not installed", out)
         self.assertEqual(sorted(os.listdir(self.home)), ["fake-keys.txt", "hosts.yml", "op-ssh-sign"])  # fixtures only
@@ -302,7 +302,7 @@ class Install(Base):
     # --- ssh-client-config -----------------------------------------------------------------
 
     def test_missing_config_is_created_with_include_only(self):
-        self.run_install()
+        self.run_sync()
         self.assertEqual(self.read(".ssh/config"), ssh1p.INCLUDE_BLOCK.lstrip("\n"))
         self.assertEqual(self.mode(".ssh/config"), 0o600)
         self.assertEqual([f for f in os.listdir(os.path.join(self.home, ".ssh")) if ".bak." in f], [])
@@ -310,7 +310,7 @@ class Install(Base):
     def test_minimal_entry_block(self):
         with open(self.registry, "a") as fh:
             fh.write("bare:\n  key: GitHub personal\n")
-        self.run_install()
+        self.run_sync()
         self.assertIn("\nHost bare\n    IdentityFile ~/.ssh/1password/github-personal.pub\n    IdentitiesOnly yes\n\n",
                       self.read(".ssh/config.d/1password.conf"))
 
@@ -318,7 +318,7 @@ class Install(Base):
         os.unlink(self.registry)
         env = ssh1p.Env(self.home, None, False)
         with captured() as buf:
-            ssh1p.cmd_install(env)
+            ssh1p.cmd_sync(env)
         self.assertTrue(os.path.isfile(os.path.join(self.home, ".config/ssh-1password/hosts.yml")))
         self.assertIn("no hosts registered yet", buf.getvalue())
         self.assertIn("an empty agent.toml would hide every key", buf.getvalue())
@@ -334,6 +334,45 @@ class Packaging(unittest.TestCase):
             self.assertEqual(out.returncode, 0)
             self.assertEqual(out.stdout.strip(), f"ssh-1password {ssh1p.__version__}")
 
+    def test_install_sh_from_local_tarball_and_uninstall(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tarball = os.path.join(tmp, "release.tar.gz")
+            top = f"ssh-1password-{ssh1p.__version__}"
+            with tarfile.open(tarball, "w:gz") as tf:
+                for rel in ("ssh-1password.py", "templates/hosts.yml", "README.md", "LICENSE"):
+                    tf.add(os.path.join(ROOT, rel), arcname=f"{top}/{rel}")
+            prefix = os.path.join(tmp, "prefix")
+            sh = ["sh", os.path.join(ROOT, "install.sh"), "--prefix", prefix]
+            out = subprocess.run(sh + ["--from", tarball], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            link = os.path.join(prefix, "bin", "ssh-1password")
+            self.assertTrue(os.path.islink(link))
+            self.assertIn("is not in your PATH", out.stdout)
+            ver = subprocess.run([link, "--version"], capture_output=True, text=True)
+            self.assertEqual(ver.stdout.strip(), f"ssh-1password {ssh1p.__version__}")
+            out = subprocess.run(sh + ["--uninstall"], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertFalse(os.path.lexists(link))
+            self.assertFalse(os.path.exists(os.path.join(prefix, "share", "ssh-1password")))
+
+    def test_install_sh_rejects_foreign_tarball(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tarball = os.path.join(tmp, "other.tar.gz")
+            with tarfile.open(tarball, "w:gz") as tf:
+                tf.add(os.path.join(ROOT, "LICENSE"), arcname="something-else/LICENSE")
+            out = subprocess.run(["sh", os.path.join(ROOT, "install.sh"), "--prefix", os.path.join(tmp, "p"),
+                                  "--from", tarball], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 1)
+            self.assertIn("does not look like an ssh-1password release", out.stderr)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "p", "bin", "ssh-1password")))
+
+    def test_install_command_was_renamed_to_sync(self):
+        with captured() as buf, contextlib.redirect_stderr(buf):
+            self.assertEqual(ssh1p.main(["install"]), 2)
+        self.assertIn("unknown argument: install", buf.getvalue())
+
     def test_template_found_through_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             link = os.path.join(tmp, "ssh-1password")
@@ -346,14 +385,14 @@ class Packaging(unittest.TestCase):
 
 class Doctor(Base):
     def test_doctor_after_install_is_clean(self):
-        self.run_install()
+        self.run_sync()
         rc, out = self.run_doctor()
         self.assertEqual(rc, 0, out)
         self.assertNotIn("FAIL", out)
         self.assertIn("ssh -G checks skipped", out)
 
     def test_doctor_detects_drift(self):
-        self.run_install()
+        self.run_sync()
         with open(self.registry, "a") as fh:
             fh.write("extra:\n  key: GitHub work\n")
         rc, out = self.run_doctor()
@@ -367,14 +406,14 @@ class Doctor(Base):
         self.assertIn(".pub missing", out)
 
     def test_doctor_fails_without_app(self):
-        self.run_install()
+        self.run_sync()
         ssh1p.app_installed = lambda: False
         rc, out = self.run_doctor()
         self.assertEqual(rc, 1)
         self.assertIn("FAIL 1Password app not found", out)
 
     def test_doctor_warns_when_agent_unreachable(self):
-        self.run_install()
+        self.run_sync()
         ssh1p.SSH_ADD = [sys.executable, "-I", FAKE_SSH_ADD, self.fake_out, "2"]
         rc, out = self.run_doctor()
         self.assertEqual(rc, 0, out)
@@ -382,7 +421,7 @@ class Doctor(Base):
         self.assertIn("agent not available to confirm", out)
 
     def test_doctor_warns_on_loose_permissions(self):
-        self.run_install()
+        self.run_sync()
         os.chmod(os.path.join(self.home, ".ssh/config.d/1password.conf"), 0o644)
         os.chmod(os.path.join(self.home, ".ssh"), 0o755)
         rc, out = self.run_doctor()
@@ -391,14 +430,14 @@ class Doctor(Base):
         self.assertIn(".ssh is accessible by others", out)
 
     def test_doctor_warns_on_missing_agent_toml(self):
-        self.run_install()
+        self.run_sync()
         os.remove(os.path.join(self.home, ".config/1Password/ssh/agent.toml"))
         rc, out = self.run_doctor()
         self.assertEqual(rc, 0, out)
         self.assertIn("WARN ~/.config/1Password/ssh/agent.toml missing", out)
 
     def test_doctor_warns_on_foreign_agent_toml_missing_title(self):
-        self.run_install()
+        self.run_sync()
         with open(os.path.join(self.home, ".config/1Password/ssh/agent.toml"), "w") as fh:
             fh.write('[[ssh-keys]]\nitem = "GitHub personal"\n')
         rc, out = self.run_doctor()
@@ -406,7 +445,7 @@ class Doctor(Base):
         self.assertIn("(yours) does not list: GitHub work", out)
 
     def test_doctor_warns_on_orphan_and_rotated_key(self):
-        self.run_install()
+        self.run_sync()
         pubdir = os.path.join(self.home, ".ssh/1password")
         with open(os.path.join(pubdir, "old.pub"), "w") as fh:
             fh.write("ssh-ed25519 AAAA old\n")
@@ -434,7 +473,7 @@ class GitIdentity(Base):
             return fh.read()
 
     def test_identity_applied_probed_and_removed(self):
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         ident = self.read(".config/ssh-1password/git/github-work.gitconfig")
         self.assertIn("[user]\n\temail = me@work.example\n\tname = Work Me\n", ident)
         self.assertEqual(self.mode(".config/ssh-1password/git/github-work.gitconfig"), 0o600)
@@ -449,20 +488,20 @@ class GitIdentity(Base):
         self.assertEqual(rc, 0, out)
         self.assertIn("github-work: repos cloned through this alias commit as <me@work.example>", out)
 
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertIn("git identities for 1 alias(es) (no changes)", out)
         self.assertNotIn("set    git includeIf", out)
 
         with open(self.registry, "w") as fh:
             fh.write("github-work:\n  hostname: github.com\n  user: git\n  key: GitHub work\n")
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertIn("unset  git includeIf", out)
         self.assertIn("remove ~/.config/ssh-1password/git/github-work.gitconfig", out)
         self.assertNotIn("includeIf", self.gitconfig())
         self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password/git/github-work.gitconfig")))
 
     def test_doctor_detects_missing_include(self):
-        self.run_install()
+        self.run_sync()
         os.remove(os.path.join(self.home, ".gitconfig"))
         rc, out = self.run_doctor()
         self.assertEqual(rc, 1)
@@ -470,7 +509,7 @@ class GitIdentity(Base):
         self.assertIn("would commit as", out)
 
     def test_dry_run_touches_no_git_config(self):
-        _rc, out = self.run_install(dry=True)
+        _rc, out = self.run_sync(dry=True)
         self.assertIn('set    git includeIf "hasconfig:remote.*.url:git@github-work:*/**"', out)
         self.assertEqual(self.gitconfig(), "")
         self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password/git")))
@@ -486,7 +525,7 @@ class GitIdentity(Base):
     def test_flat_remote_and_alias_without_user(self):
         with open(self.registry, "a") as fh:
             fh.write("plain:\n  key: GitHub personal\n  email: plain@example\n")
-        self.run_install()
+        self.run_sync()
         self.assertEqual(self.probe("git@github-work:repo.git"), "me@work.example")
         self.assertEqual(self.probe("git@github-work:org/sub/repo.git"), "me@work.example")
         self.assertEqual(self.probe("plain:org/repo.git"), "plain@example")
@@ -500,7 +539,7 @@ class GitIdentity(Base):
         saved = ssh1p.git_supports_hasconfig
         ssh1p.git_supports_hasconfig = lambda env: False
         try:
-            _rc, out = self.run_install()
+            _rc, out = self.run_sync()
             self.assertIn("git < 2.36", out)
             self.assertEqual(self.gitconfig(), "")
             self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password/git")))
@@ -542,7 +581,7 @@ class CommitSigning(Base):
         return value.strip()
 
     def test_manual_then_always(self):
-        rc, out = self.run_install()
+        rc, out = self.run_sync()
         self.assertEqual(rc, 0)
         ident = self.read(self.IDENT)
         self.assertIn(f"[user]\n\temail = me@work.example\n\tname = Work Me\n\tsigningkey = ssh-ed25519 {blob('work')}\n"
@@ -560,7 +599,7 @@ class CommitSigning(Base):
         self.assertEqual(self.probe("git@github-personal:org/repo.git", "gpg.format"), "")
 
         self.write_registry(self.PERSONAL + self.WORK + "  sign: always\n")
-        self.run_install()
+        self.run_sync()
         self.assertIn("[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n", self.read(self.IDENT))
         self.assertEqual(self.probe(url, "commit.gpgsign"), "true")
         rc, out = self.run_doctor()
@@ -569,7 +608,7 @@ class CommitSigning(Base):
 
     def test_dedicated_signing_key(self):
         self.write_registry(self.PERSONAL + self.WORK + "  sign: manual\n  signing_key: Signing work\n")
-        self.run_install()
+        self.run_sync()
         self.assertEqual(sorted(os.listdir(os.path.join(self.home, ".ssh/1password"))),
                          ["github-personal.pub", "github-work.pub", "signing-work.pub"])
         self.assertIn('item = "Signing work"', self.read(".config/1Password/ssh/agent.toml"))
@@ -582,7 +621,7 @@ class CommitSigning(Base):
 
     def test_signer_missing(self):
         ssh1p.signer_path = lambda: None
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertIn("WARN   github-work: op-ssh-sign not found", out)
         ident = self.read(self.IDENT)
         self.assertIn("email = me@work.example", ident)
@@ -593,7 +632,7 @@ class CommitSigning(Base):
 
     def test_signing_key_not_offered(self):
         self.write_registry(self.PERSONAL + self.WORK + "  sign: manual\n  signing_key: Nope\n")
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertIn("Nope: the agent does not offer it", out)
         self.assertIn("signing key 'Nope' is not offered", out)
         ident = self.read(self.IDENT)
@@ -604,28 +643,28 @@ class CommitSigning(Base):
     def test_allowed_signers_two_emails_share_a_key(self):
         self.write_registry(self.PERSONAL + self.WORK + "  sign: manual\n"
                             "github-other:\n  hostname: github.com\n  user: git\n  key: GitHub work\n  email: other@work.example\n  sign: always\n")
-        self.run_install()
+        self.run_sync()
         lines = self.read(self.ALLOWED).splitlines()
         self.assertTrue(lines[0].startswith("# generated by ssh-1password.py"))
         self.assertEqual(lines[1:], [f'me@work.example namespaces="git" ssh-ed25519 {blob("work")}',
                                      f'other@work.example namespaces="git" ssh-ed25519 {blob("work")}'])
 
     def test_signing_removed(self):
-        self.run_install()
+        self.run_sync()
         self.write_registry(self.PERSONAL + self.WORK)
-        _rc, out = self.run_install()
+        _rc, out = self.run_sync()
         self.assertIn("remove ~/.config/ssh-1password/allowed_signers", out)
         self.assertFalse(os.path.exists(os.path.join(self.home, self.ALLOWED)))
         self.assertNotIn("signingkey", self.read(self.IDENT))
         self.assertEqual(self.probe("git@github-work:org/repo.git", "gpg.format"), "")
 
     def test_dry_run_and_repeat_run(self):
-        _rc, out = self.run_install(dry=True)
+        _rc, out = self.run_sync(dry=True)
         self.assertIn(f"signingkey = ssh-ed25519 {blob('work')}", out)
         self.assertIn('namespaces="git"', out)
         self.assertFalse(os.path.exists(os.path.join(self.home, ".config/ssh-1password")))
-        self.run_install()
-        _rc, out = self.run_install()
+        self.run_sync()
+        _rc, out = self.run_sync()
         self.assertIn("github-work.gitconfig (no changes)", out)
         self.assertIn("allowed_signers (no changes)", out)
         self.assertNotIn("update", out)
@@ -633,20 +672,20 @@ class CommitSigning(Base):
     # --- doctor ----------------------------------------------------------------------------
 
     def test_doctor_detects_replaced_key(self):
-        self.run_install()
+        self.run_sync()
         with open(self.fake_out, "w") as fh:  # the "GitHub work" item now holds another key
             fh.write(f"ssh-ed25519 {blob('personal')} GitHub personal\nssh-ed25519 {blob('rotated')} GitHub work\n")
         rc, out = self.run_doctor()
         self.assertEqual(rc, 1)
         self.assertIn("FAIL github-work: the signing key changed in 1Password", out)
-        self.assertIn("run install", out)
-        self.run_install()
+        self.assertIn("run sync", out)
+        self.run_sync()
         rc, out = self.run_doctor()
         self.assertEqual(rc, 0, out)
         self.assertIn(f'me@work.example namespaces="git" ssh-ed25519 {blob("rotated")}', self.read(self.ALLOWED))
 
     def test_doctor_detects_missing_allowed_signer_line(self):
-        self.run_install()
+        self.run_sync()
         with open(os.path.join(self.home, self.ALLOWED), "w") as fh:
             fh.write("# generated by ssh-1password.py\n")
         rc, out = self.run_doctor()
@@ -654,7 +693,7 @@ class CommitSigning(Base):
         self.assertIn("allowed_signers lacks this identity", out)
 
     def test_doctor_detects_signer_removed_after_install(self):
-        self.run_install()
+        self.run_sync()
         ssh1p.signer_path = lambda: None
         rc, out = self.run_doctor()
         self.assertEqual(rc, 1)

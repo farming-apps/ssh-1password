@@ -10,24 +10,41 @@ One script, Python 3.8+ standard library, macOS and Linux. No `op` CLI needed.
 
 ## Install
 
-Download a release, verify it, and put the script on your `PATH` (replace `0.1.0` with the
-[latest release](https://github.com/milyzc/ssh-1password-integration/releases/latest)):
+macOS or Linux with Python 3.8+. Download the installer, read it if you like, and run it:
+
+```sh
+curl -fLO https://github.com/milyzc/ssh-1password-integration/releases/latest/download/install.sh
+less install.sh                              # optional: see what it does
+sh install.sh                                # or: sh install.sh --version 0.1.0
+```
+
+`install.sh` downloads the release tarball, checks it against the release's `SHA256SUMS`, unpacks it
+into `~/.local/share/ssh-1password/<version>/` and links `~/.local/bin/ssh-1password` to it. It writes
+nothing else: it does not edit your shell profile (it prints the `PATH` line when one is needed) and
+never runs `sync`. Re-run it to upgrade; `sh install.sh --uninstall` removes it. `--prefix <dir>`
+installs under another directory.
+
+<details>
+<summary>Manual install, without the script</summary>
 
 ```sh
 v=0.1.0
 base=https://github.com/milyzc/ssh-1password-integration/releases/download/v$v
 curl -fLO "$base/ssh-1password-$v.tar.gz" -fLO "$base/SHA256SUMS"
-shasum -a 256 -c SHA256SUMS                  # must print "OK"
+shasum -a 256 -c --ignore-missing SHA256SUMS   # must print "OK"
 mkdir -p ~/.local/share ~/.local/bin
 tar xzf "ssh-1password-$v.tar.gz" -C ~/.local/share
 ln -sf ~/.local/share/ssh-1password-$v/ssh-1password.py ~/.local/bin/ssh-1password
-export PATH="$HOME/.local/bin:$PATH"       # also add this to your shell startup file
+export PATH="$HOME/.local/bin:$PATH"         # also add this to your shell startup file
 ssh-1password --version
 ```
 
 The tarball holds `ssh-1password.py`, `templates/hosts.yml`, `README.md` and `LICENSE`; keep them
-together (the symlink is fine). To upgrade, repeat with the new version. Cloning the repo and running
-`python3 -I ssh-1password.py` works the same way; the Quick start below uses that form.
+together (the symlink is fine).
+</details>
+
+Cloning the repo and running `python3 -I ssh-1password.py` works the same way; the Quick start below
+uses that form.
 
 ## Quick start
 
@@ -36,14 +53,14 @@ together (the symlink is fine). To upgrade, repeat with the new version. Cloning
 3. In a terminal (not from an AI agent session: it writes under `~/.ssh`):
 
 ```sh
-python3 -I ssh-1password.py install          # creates ~/.config/ssh-1password/hosts.yml
+python3 -I ssh-1password.py sync             # creates ~/.config/ssh-1password/hosts.yml
 $EDITOR ~/.config/ssh-1password/hosts.yml    # register your hosts and keys
-python3 -I ssh-1password.py install          # fetches the .pub files, writes the ssh config
+python3 -I ssh-1password.py sync             # fetches the .pub files, writes the ssh config
 python3 -I ssh-1password.py doctor
 ssh -T git@github-work                       # 1Password asks once; GitHub answers "Hi <user>!"
 ```
 
-Re-run `install` whenever you edit the registry or rename a key in 1Password. It is idempotent:
+Re-run `sync` whenever you edit the registry or rename a key in 1Password. It is idempotent:
 unchanged files are reported as `no changes`, and `--dry-run` shows everything it would write.
 It exits 1 when a registered key ends up without its `.pub` (1Password locked or closed, item
 renamed, duplicate title): the generated config uses `IdentitiesOnly yes`, so ssh would offer no key
@@ -84,7 +101,7 @@ homelab:                      # several patterns are allowed: "pve router npm"
 machine at home, `Git` for every forge, `Clients` for customer bastions). Fewer keys to rotate,
 and a compromise of one domain does not open the others.
 
-## What `install` writes
+## What `sync` writes
 
 Everything lands outside the repo. Your own files are never rewritten, only extended once.
 
@@ -116,7 +133,7 @@ Host cliente-acme
 
 Add `email:` (and optionally `name:`) to a host and every repository whose remote goes through that
 alias commits with that identity, with no per-repo `git config`. It relies on git's
-`includeIf "hasconfig:remote.*.url:<pattern>"` (git 2.36+): `install` registers the patterns
+`includeIf "hasconfig:remote.*.url:<pattern>"` (git 2.36+): `sync` registers the patterns
 `git@<alias>:*/**`, `git@<alias>:*`, `ssh://git@<alias>/**` and `ssh://git@<alias>:*/**` (URLs with a
 port) for each alias (and the same without `git@`). git matches them with pathname globbing, so `**` only spans directories as a whole
 component; that is why both `:*/**` and `:*` are needed. The alias can be a real
@@ -140,7 +157,7 @@ Some organizations require signed commits. Add `sign:` to a host that has `email
 - `signing_key: <title>`: use a dedicated 1Password key for signing instead of the authentication
   key, for example to revoke one without the other. It is fetched and allowlisted like any key.
 
-What `install` adds to the alias's identity file: `gpg.format ssh`, `gpg.ssh.program` pointing at
+What `sync` adds to the alias's identity file: `gpg.format ssh`, `gpg.ssh.program` pointing at
 `op-ssh-sign` inside the 1Password app, `user.signingkey` with the full public key line, and
 `gpg.ssh.allowedSignersFile`. Then, by hand:
 
@@ -153,7 +170,7 @@ What `install` adds to the alias's identity file: `gpg.format ssh`, `gpg.ssh.pro
 `doctor` checks, without asking 1Password for a signature, that the signer binary exists, that a
 repository cloned through the alias resolves these settings, and that the configured public key is
 still the one the agent offers: if you replace the key in 1Password, it reports a `FAIL` until you
-re-run `install` and upload the new public key.
+re-run `sync` and upload the new public key.
 
 ### Why `agent.toml`
 
@@ -161,7 +178,7 @@ Without it, the agent offers every key in your default vaults, in creation order
 Servers reject clients after about six keys (`Too many authentication failures`), and a key from a
 vault you shared with work is not offered at all. With it, only the listed keys are offered, in that
 order, and keys from other vaults become available (`vault:` in the registry). Creating the file
-changes the agent's behaviour even if empty, which is why `install` never writes one without
+changes the agent's behaviour even if empty, which is why `sync` never writes one without
 entries: with no hosts, or when every key is registered by `SHA256:` fingerprint (the allowlist
 matches by item title, not fingerprint), the file is left alone and a warning says so.
 After the file is first created, lock and unlock 1Password once; later edits are picked up live.
@@ -218,11 +235,11 @@ entry of yours overriding it is caught); `agent.toml` lists every registered key
 | `Could not open a connection to your authentication agent` | agent toggle off, or wrong socket path; `doctor` shows which |
 | `Too many authentication failures` | a `Host *` of yours adds more `IdentityFile`s, or `agent.toml` missing; `doctor` runs `ssh -G` |
 | `agent refused operation` | approval denied or 1Password locked; check the tray icon |
-| `no such identity: ~/.ssh/1password/<slug>.pub`, then `Permission denied (publickey)` | `install` ran while 1Password was locked or closed, so the `.pub` was never written (`install` exits 1, `doctor` reports it missing): unlock 1Password and re-run `install` |
-| `Permission denied (publickey)` with the right alias | the `.pub` on the server is not the one 1Password offers, or the local `.pub` is stale because you replaced the key in 1Password (`doctor` reports it as rotated): re-run `install`, then compare fingerprints |
-| Key not offered although it exists in 1Password | item in a non-default vault: add `vault:` and re-run `install` |
+| `no such identity: ~/.ssh/1password/<slug>.pub`, then `Permission denied (publickey)` | `sync` ran while 1Password was locked or closed, so the `.pub` was never written (`sync` exits 1, `doctor` reports it missing): unlock 1Password and re-run `sync` |
+| `Permission denied (publickey)` with the right alias | the `.pub` on the server is not the one 1Password offers, or the local `.pub` is stale because you replaced the key in 1Password (`doctor` reports it as rotated): re-run `sync`, then compare fingerprints |
+| Key not offered although it exists in 1Password | item in a non-default vault: add `vault:` and re-run `sync` |
 | Command hangs | pending approval: unlock 1Password |
-| `git commit -S` fails with `Load key ... invalid format` or `op-ssh-sign: no such file` | `gpg.ssh.program` does not point at the binary inside the installed 1Password app; `doctor` names the expected path, re-run `install` after reinstalling the app |
+| `git commit -S` fails with `Load key ... invalid format` or `op-ssh-sign: no such file` | `gpg.ssh.program` does not point at the binary inside the installed 1Password app; `doctor` names the expected path, re-run `sync` after reinstalling the app |
 | Commit shows "Unverified" on GitHub/GitLab although `git log --show-signature` is good | the public key was uploaded as an Authentication key only: add it again as a **Signing key** (and authorize SSO) |
 | Signed commit although the host has `sign: manual` | a global or local `commit.gpgsign true` of yours; `doctor` reports it |
 
@@ -230,7 +247,7 @@ entry of yours overriding it is caught); `agent.toml` lists every registered key
 
 ```sh
 python3 -I tests/test_ssh_1password.py      # runs against a temporary --home and a fake ssh-add
-python3 -I ssh-1password.py install --dry-run --home /tmp/fake-home --file templates/hosts.yml
+python3 -I ssh-1password.py sync --dry-run --home /tmp/fake-home --file templates/hosts.yml
 ```
 
 ## Releasing
@@ -238,7 +255,7 @@ python3 -I ssh-1password.py install --dry-run --home /tmp/fake-home --file templ
 1. Bump `__version__` in `ssh-1password.py` and merge to `main`.
 2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
 3. The `release` workflow runs the tests, checks that the tag matches `__version__`, and publishes
-   `ssh-1password-<version>.tar.gz` plus `SHA256SUMS` as a GitHub Release.
+   `ssh-1password-<version>.tar.gz`, `install.sh` and `SHA256SUMS` as a GitHub Release.
 
 ## License
 
