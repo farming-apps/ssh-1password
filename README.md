@@ -1,4 +1,4 @@
-# ssh-1password-integration
+# ssh-1password
 
 SSH keys live in 1Password and are used through the **1Password SSH agent**: the private key never
 touches the disk, every use asks for Touch ID (or the system unlock), and the same setup works on any
@@ -13,7 +13,7 @@ One script, Python 3.8+ standard library, macOS and Linux. No `op` CLI needed.
 macOS or Linux with Python 3.8+. Download the installer, read it if you like, and run it:
 
 ```sh
-curl -fLO https://github.com/milyzc/ssh-1password-integration/releases/latest/download/install.sh
+curl -fLO https://github.com/farming-apps/ssh-1password/releases/latest/download/install.sh
 less install.sh                              # optional: see what it does
 sh install.sh                                # or: sh install.sh --version 0.1.0
 ```
@@ -29,7 +29,7 @@ installs under another directory.
 
 ```sh
 v=0.1.0
-base=https://github.com/milyzc/ssh-1password-integration/releases/download/v$v
+base=https://github.com/farming-apps/ssh-1password/releases/download/v$v
 curl -fLO "$base/ssh-1password-$v.tar.gz" -fLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS   # must print "OK"
 mkdir -p ~/.local/share ~/.local/bin

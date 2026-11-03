@@ -11,7 +11,7 @@
 # run that yourself afterwards.
 set -eu
 
-REPO="milyzc/ssh-1password-integration"
+REPO="farming-apps/ssh-1password"
 BASE_URL="https://github.com/$REPO/releases"
 
 prefix="$HOME/.local"
