@@ -1,5 +1,7 @@
 # ssh-1password
 
+[![test](https://github.com/farming-apps/ssh-1password/actions/workflows/test.yml/badge.svg)](https://github.com/farming-apps/ssh-1password/actions/workflows/test.yml)
+
 SSH keys live in 1Password and are used through the **1Password SSH agent**: the private key never
 touches the disk, every use asks for Touch ID (or the system unlock), and the same setup works on any
 machine where the app is installed. This repo adds what the app does not: a small registry that maps
@@ -249,6 +251,13 @@ entry of yours overriding it is caught); `agent.toml` lists every registered key
 python3 -I tests/test_ssh_1password.py      # runs against a temporary --home and a fake ssh-add
 python3 -I ssh-1password.py sync --dry-run --home /tmp/fake-home --file templates/hosts.yml
 ```
+
+## Contributing
+
+Bug reports and pull requests are welcome. For anything larger than a small fix, open an issue first
+so we can agree on the approach. Keep to the Python 3.8 standard library, add a test in
+`tests/test_ssh_1password.py` for the behaviour you change, and run the tests above before opening
+the PR. Security issues go through [SECURITY.md](SECURITY.md), not public issues.
 
 ## Releasing
 
