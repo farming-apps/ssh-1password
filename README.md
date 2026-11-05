@@ -2,51 +2,22 @@
 
 [![test](https://github.com/farming-apps/ssh-1password/actions/workflows/test.yml/badge.svg)](https://github.com/farming-apps/ssh-1password/actions/workflows/test.yml)
 
-SSH keys live in 1Password and are used through the **1Password SSH agent**: the private key never
-touches the disk, every use asks for Touch ID (or the system unlock), and the same setup works on any
-machine where the app is installed. This repo adds what the app does not: a small registry that maps
-host aliases to keys, so each host is offered **only its key**, and a `doctor` that tells you when
-something drifted.
+Use SSH keys stored in 1Password through the **1Password SSH agent**, with each host offered
+**only its key**. The private key never touches the disk and every use asks for Touch ID (or the
+system unlock). This tool adds a small registry that maps host aliases to keys, generates the ssh
+and git config from it, and a `doctor` that tells you when something drifted.
 
 One script, Python 3.8+ standard library, macOS and Linux. No `op` CLI needed.
 
 ## Install
 
-macOS or Linux with Python 3.8+. Download the installer, read it if you like, and run it:
-
 ```sh
 curl -fLO https://github.com/farming-apps/ssh-1password/releases/latest/download/install.sh
-less install.sh                              # optional: see what it does
-sh install.sh                                # or: sh install.sh --version 0.1.0
+sh install.sh                                # sh install.sh --uninstall removes it
 ```
 
-`install.sh` downloads the release tarball, checks it against the release's `SHA256SUMS`, unpacks it
-into `~/.local/share/ssh-1password/<version>/` and links `~/.local/bin/ssh-1password` to it. It writes
-nothing else: it does not edit your shell profile (it prints the `PATH` line when one is needed) and
-never runs `sync`. Re-run it to upgrade; `sh install.sh --uninstall` removes it. `--prefix <dir>`
-installs under another directory.
-
-<details>
-<summary>Manual install, without the script</summary>
-
-```sh
-v=0.1.0
-base=https://github.com/farming-apps/ssh-1password/releases/download/v$v
-curl -fLO "$base/ssh-1password-$v.tar.gz" -fLO "$base/SHA256SUMS"
-shasum -a 256 -c --ignore-missing SHA256SUMS   # must print "OK"
-mkdir -p ~/.local/share ~/.local/bin
-tar xzf "ssh-1password-$v.tar.gz" -C ~/.local/share
-ln -sf ~/.local/share/ssh-1password-$v/ssh-1password.py ~/.local/bin/ssh-1password
-export PATH="$HOME/.local/bin:$PATH"         # also add this to your shell startup file
-ssh-1password --version
-```
-
-The tarball holds `ssh-1password.py`, `templates/hosts.yml`, `README.md` and `LICENSE`; keep them
-together (the symlink is fine).
-</details>
-
-Cloning the repo and running `python3 -I ssh-1password.py` works the same way; the Quick start below
-uses that form.
+It verifies the release checksum and links `~/.local/bin/ssh-1password`; it does not touch your
+shell profile or `~/.ssh`. Options and manual install: [docs/install.md](docs/install.md).
 
 ## Quick start
 
@@ -55,216 +26,47 @@ uses that form.
 3. In a terminal (not from an AI agent session: it writes under `~/.ssh`):
 
 ```sh
-python3 -I ssh-1password.py sync             # creates ~/.config/ssh-1password/hosts.yml
-$EDITOR ~/.config/ssh-1password/hosts.yml    # register your hosts and keys
-python3 -I ssh-1password.py sync             # fetches the .pub files, writes the ssh config
-python3 -I ssh-1password.py doctor
-ssh -T git@github-work                       # 1Password asks once; GitHub answers "Hi <user>!"
+ssh-1password sync             # creates ~/.config/ssh-1password/hosts.yml
+$EDITOR ~/.config/ssh-1password/hosts.yml
+ssh-1password sync             # fetches the .pub files, writes the ssh config
+ssh-1password doctor
+ssh -T git@github-work         # 1Password asks once; GitHub answers "Hi <user>!"
 ```
 
-Re-run `sync` whenever you edit the registry or rename a key in 1Password. It is idempotent:
-unchanged files are reported as `no changes`, and `--dry-run` shows everything it would write.
-It exits 1 when a registered key ends up without its `.pub` (1Password locked or closed, item
-renamed, duplicate title): the generated config uses `IdentitiesOnly yes`, so ssh would offer no key
-for those hosts. Every other step still runs.
+Re-run `sync` whenever you edit the registry or rename a key in 1Password. It is idempotent, and
+`--dry-run` shows what it would write.
 
-## The registry: `~/.config/ssh-1password/hosts.yml`
+## The registry
 
 ```yaml
-# alias: what you type after "ssh" and what git remotes use (git@github-work:org/repo.git)
-github-personal:
-  hostname: github.com
-  user: git                   # SSH login, always "git" on GitHub/GitLab (not your account name)
-  key: GitHub personal        # title of the SSH key item in 1Password
+# alias: what you type after "ssh" and what git remotes use
 github-work:
   hostname: github.com
-  user: git
-  key: GitHub work
-  vault: Work                 # only for keys outside your Personal/Private/Employee vault
-  email: me@work.example      # git identity for repos cloned through this alias
-  name: My Name
-  sign: manual                # SSH commit signing ready for those repos (manual | always)
-homelab:                      # several patterns are allowed: "pve router npm"
+  user: git                   # SSH login, always "git" on GitHub/GitLab
+  key: GitHub work            # title of the SSH key item in 1Password
+  email: me@work.example      # optional: git identity for repos cloned through this alias
+homelab:
   hostname: 192.0.2.10
   user: admin
   key: Homelab
 ```
 
-- `key` is required: the item title in 1Password, or its `SHA256:` fingerprint if titles clash.
-- `hostname`, `user`, `port`, `vault`, `email`, `name`, `sign`, `signing_key` are optional. `user` is the SSH login, not your forge
-  account: GitHub and GitLab always use `git` and tell accounts apart by the key. Without it you
-  must write `git@` in every remote (`git@github-work:org/repo.git`) and in `ssh -T git@github-work`.
-- Git remotes use the **alias**, not `github.com`: `git@github-work:org/repo.git`. For an existing
-  clone: `git remote set-url origin git@github-work:org/repo.git`.
-- The file lives outside any repository (hostnames are endpoints). Override its location with
-  `$SSH_1P_HOSTS` or `--file`.
+- `key` is required; everything else is optional (`port`, `vault`, `name`, `sign`, …).
+- Git remotes use the **alias**: `git@github-work:org/repo.git`.
+- **One key per trust domain, not per host**: fewer keys to rotate, and a compromised domain does
+  not open the others.
 
-**One key per trust domain, not per host.** Several hosts can share a key (`Homelab` for every
-machine at home, `Git` for every forge, `Clients` for customer bastions). Fewer keys to rotate,
-and a compromise of one domain does not open the others.
+## Documentation
 
-## What `sync` writes
-
-Everything lands outside the repo. Your own files are never rewritten, only extended once.
-
-| File | Owner | What happens |
-|---|---|---|
-| `~/.config/ssh-1password/hosts.yml` | you | copied from `templates/hosts.yml` only if missing |
-| `~/.ssh/config` | you | `Match all` + `Include config.d/1password.conf` appended **once, at the end** (backup `config.bak.<timestamp>`); skipped if an existing `Include config.d/*.conf` already covers it |
-| `~/.ssh/config.d/1password.conf` | script | regenerated from the registry: one `Host` block per alias with `IdentityFile` + `IdentitiesOnly yes`, plus `Host *` with `IdentityAgent`, `ForwardAgent no`, `AddKeysToAgent no` |
-| `~/.ssh/1password/<slug>.pub` | script | one public key per registered key, read from the agent (`ssh-add -L`); never a private key |
-| `~/.config/1Password/ssh/agent.toml` | script, **only if absent or generated by it** | lists the registered keys, in registry order; a file you wrote yourself is left alone and the missing entries are printed for you to paste |
-| `~/.config/ssh-1password/git/<alias>.gitconfig` | script | one `[user]` block per host with `email:`, plus the SSH signing settings when the host has `sign:`; removed when the email is removed |
-| `~/.config/ssh-1password/allowed_signers` | script | one `<email> namespaces="git" <public key>` line per signing host, so `git log --show-signature` verifies locally; removed when no host signs |
-| global git config (`~/.gitconfig`) | you | only `includeIf "hasconfig:remote.*.url:…"` keys pointing at the files above are added or removed, through `git config --global`; nothing else is touched |
-
-Precedence: ssh uses the **first** value it finds for each option, and the Include is last. Whatever
-you wrote above it wins, for example a customer host that imposes a file key:
-
-```
-Host cliente-acme
-    HostName bastion.acme.example
-    IdentityAgent none
-    IdentityFile ~/.ssh/clientes/acme_ed25519
-    IdentitiesOnly yes
-```
-
-`Match all` precedes the Include so it is not swallowed by a `Host` block that happens to end your file.
-
-### Git identity per alias
-
-Add `email:` (and optionally `name:`) to a host and every repository whose remote goes through that
-alias commits with that identity, with no per-repo `git config`. It relies on git's
-`includeIf "hasconfig:remote.*.url:<pattern>"` (git 2.36+): `sync` registers the patterns
-`git@<alias>:*/**`, `git@<alias>:*`, `ssh://git@<alias>/**` and `ssh://git@<alias>:*/**` (URLs with a
-port) for each alias (and the same without `git@`). git matches them with pathname globbing, so `**` only spans directories as a whole
-component; that is why both `:*/**` and `:*` are needed. The alias can be a real
-hostname (`github.com`), so existing clones keep working. `doctor` creates a throwaway repository
-with such a remote and checks who git would commit as, which catches a stray `user.email` in a
-local config that overrides it. A repo cloned through a hostname that is not in the registry gets
-no identity; add the alias or set `user.email` locally.
-
-### Commit signing
-
-Some organizations require signed commits. Add `sign:` to a host that has `email:` and the same
-1Password key signs through **SSH signatures**, which GitHub and GitLab show as "Verified". No PGP:
-1Password is not a GPG agent, and a PGP key kept there would have to be exported to `~/.gnupg`.
-
-- `sign: manual`: the key is configured for the alias but nothing is signed by default. Sign one
-  commit with `git commit -S`, or turn it on only in the repositories that require it with
-  `git config commit.gpgsign true` there. Repositories of the same alias that do not need signing
-  are not affected.
-- `sign: always`: every commit and tag of the alias is signed. A repository can opt out with
-  `git config commit.gpgsign false`, because local config wins over the include.
-- `signing_key: <title>`: use a dedicated 1Password key for signing instead of the authentication
-  key, for example to revoke one without the other. It is fetched and allowlisted like any key.
-
-What `sync` adds to the alias's identity file: `gpg.format ssh`, `gpg.ssh.program` pointing at
-`op-ssh-sign` inside the 1Password app, `user.signingkey` with the full public key line, and
-`gpg.ssh.allowedSignersFile`. Then, by hand:
-
-1. Upload `~/.ssh/1password/<slug>.pub` to GitHub (Settings → SSH and GPG keys) or GitLab as a
-   **Signing key**. It is a different type from the Authentication key you already have, even when
-   it is the same key. If the organization uses SSO, authorize the key for it.
-2. Make a signed commit; 1Password asks you to approve the `git` application once per unlock.
-3. `git log --show-signature -1` prints `Good "git" signature`, and the forge shows "Verified".
-
-`doctor` checks, without asking 1Password for a signature, that the signer binary exists, that a
-repository cloned through the alias resolves these settings, and that the configured public key is
-still the one the agent offers: if you replace the key in 1Password, it reports a `FAIL` until you
-re-run `sync` and upload the new public key.
-
-### Why `agent.toml`
-
-Without it, the agent offers every key in your default vaults, in creation order, to every server.
-Servers reject clients after about six keys (`Too many authentication failures`), and a key from a
-vault you shared with work is not offered at all. With it, only the listed keys are offered, in that
-order, and keys from other vaults become available (`vault:` in the registry). Creating the file
-changes the agent's behaviour even if empty, which is why `sync` never writes one without
-entries: with no hosts, or when every key is registered by `SHA256:` fingerprint (the allowlist
-matches by item title, not fingerprint), the file is left alone and a warning says so.
-After the file is first created, lock and unlock 1Password once; later edits are picked up live.
-
-## `doctor`
-
-Exits 1 on any `FAIL`. Checks: app and agent reachable; registry present with hosts; `~/.ssh/config`
-includes the generated file and that file matches the registry; `.pub` present per key and still
-offered by the agent with the same fingerprint (a renamed or deleted item is a `WARN`); per host,
-`ssh -G <alias>` resolves to its `.pub`, `IdentitiesOnly yes` and the 1Password socket (so an older
-entry of yours overriding it is caught); `agent.toml` lists every registered key; permissions.
-
-## Security notes
-
-- Nothing on disk to steal: the `.pub` files and the config are public by nature. A file key can be
-  copied by anyone with root on the machine; a 1Password key requires the vault unlocked and your
-  approval, and every use shows in the item's **Activity** tab.
-- Keep biometric approval on, auto-lock after a few minutes and on screen lock, and **deny any
-  approval prompt you did not expect**: that is the signal that something on the machine is using
-  your keys.
-- `ForwardAgent no` by default. Use `ProxyJump` for intermediate hops.
-- Unattended jobs (cron, systemd timers, CI runners) should **not** use the agent: there is nobody to
-  approve. Give them a dedicated file key restricted in `authorized_keys`
-  (`command="..."`, `no-pty`, `no-port-forwarding`, `no-agent-forwarding`) and a `Host` entry with
-  `IdentityAgent none` in your own config, above the Include.
-- AI agents and scripts from your desktop: the agent works if 1Password is unlocked. If a command
-  hangs, look for **"SSH request waiting"** in the 1Password tray icon. `BatchMode=yes` silences ssh's
-  own prompts, not 1Password's. Authorize the terminal by hand once before a long session.
-
-## Migrating from file keys
-
-1. Inventory your keys and the hosts that accept each one.
-2. Create new ed25519 keys in 1Password (one per trust domain); import a legacy key only if some
-   device cannot accept a new one.
-3. Per host, in parallel with the old key: add the new public key to `authorized_keys`, test with
-   `ssh -o IdentitiesOnly=yes -i ~/.ssh/1password/<slug>.pub <host>`, then remove the old one.
-4. Move retired private keys out of `~/.ssh`, wait a few days, delete them.
-
-## Options not applied (do them by hand if you want them)
-
-- **Signing for repositories outside any alias**: `sign:` only applies to repositories whose remote
-  goes through a registered alias. For others, set `gpg.format`, `gpg.ssh.program`,
-  `user.signingkey` and `gpg.ssh.allowedSignersFile` yourself, globally or per repository.
-- **`export SSH_AUTH_SOCK`** in your shell profile: only for tools that ignore `ssh_config`
-  (some GUIs). Not needed for ssh and git.
-- **Linux**: install 1Password from the vendor repository (Flatpak and Snap builds cannot expose the
-  socket). GNOME keyring may override `SSH_AUTH_SOCK`; the `IdentityAgent` in the generated config
-  sidesteps it.
-
-## Troubleshooting
-
-| Symptom | Usual cause |
-|---|---|
-| `Could not open a connection to your authentication agent` | agent toggle off, or wrong socket path; `doctor` shows which |
-| `Too many authentication failures` | a `Host *` of yours adds more `IdentityFile`s, or `agent.toml` missing; `doctor` runs `ssh -G` |
-| `agent refused operation` | approval denied or 1Password locked; check the tray icon |
-| `no such identity: ~/.ssh/1password/<slug>.pub`, then `Permission denied (publickey)` | `sync` ran while 1Password was locked or closed, so the `.pub` was never written (`sync` exits 1, `doctor` reports it missing): unlock 1Password and re-run `sync` |
-| `Permission denied (publickey)` with the right alias | the `.pub` on the server is not the one 1Password offers, or the local `.pub` is stale because you replaced the key in 1Password (`doctor` reports it as rotated): re-run `sync`, then compare fingerprints |
-| Key not offered although it exists in 1Password | item in a non-default vault: add `vault:` and re-run `sync` |
-| Command hangs | pending approval: unlock 1Password |
-| `git commit -S` fails with `Load key ... invalid format` or `op-ssh-sign: no such file` | `gpg.ssh.program` does not point at the binary inside the installed 1Password app; `doctor` names the expected path, re-run `sync` after reinstalling the app |
-| Commit shows "Unverified" on GitHub/GitLab although `git log --show-signature` is good | the public key was uploaded as an Authentication key only: add it again as a **Signing key** (and authorize SSO) |
-| Signed commit although the host has `sign: manual` | a global or local `commit.gpgsign true` of yours; `doctor` reports it |
-
-## Development
-
-```sh
-python3 -I tests/test_ssh_1password.py      # runs against a temporary --home and a fake ssh-add
-python3 -I ssh-1password.py sync --dry-run --home /tmp/fake-home --file templates/hosts.yml
-```
+- [Reference](docs/reference.md): all registry fields, what `sync` writes, git identity per alias,
+  commit signing, `agent.toml`, `doctor`.
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security notes and migrating from file keys](docs/security.md)
+- [Install options](docs/install.md)
 
 ## Contributing
 
-Bug reports and pull requests are welcome. For anything larger than a small fix, open an issue first
-so we can agree on the approach. Keep to the Python 3.8 standard library, add a test in
-`tests/test_ssh_1password.py` for the behaviour you change, and run the tests above before opening
-the PR. Security issues go through [SECURITY.md](SECURITY.md), not public issues.
-
-## Releasing
-
-1. Bump `__version__` in `ssh-1password.py` and merge to `main`.
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
-3. The `release` workflow runs the tests, checks that the tag matches `__version__`, and publishes
-   `ssh-1password-<version>.tar.gz`, `install.sh` and `SHA256SUMS` as a GitHub Release.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through [SECURITY.md](SECURITY.md).
 
 ## License
 
