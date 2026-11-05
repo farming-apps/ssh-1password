@@ -15,6 +15,6 @@ python3 -I ssh-1password.py sync --dry-run --home /tmp/fake-home --file template
 ## Releasing
 
 1. Bump `__version__` in `ssh-1password.py` and merge to `main`.
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+2. Tag and push: `git tag v0.1.1 && git push origin v0.1.1`.
 3. The `release` workflow runs the tests, checks that the tag matches `__version__`, and publishes
    `ssh-1password-<version>.tar.gz`, `install.sh` and `SHA256SUMS` as a GitHub Release.

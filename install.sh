@@ -2,7 +2,7 @@
 # install.sh: download, verify and install ssh-1password from a GitHub Release (macOS, Linux).
 #
 #   sh install.sh                       latest release into ~/.local
-#   sh install.sh --version 0.1.0       a given release
+#   sh install.sh --version 0.1.1       a given release
 #   sh install.sh --prefix /opt/tools   files in <prefix>/share/ssh-1password, link in <prefix>/bin
 #   sh install.sh --from <tarball>      install a local release tarball (no download, no checksum)
 #   sh install.sh --uninstall           remove the link and the installed versions
