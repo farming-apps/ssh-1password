@@ -5,7 +5,7 @@ macOS or Linux with Python 3.8+. Download the installer, read it if you like, an
 ```sh
 curl -fLO https://github.com/farming-apps/ssh-1password/releases/latest/download/install.sh
 less install.sh                              # optional: see what it does
-sh install.sh                                # or: sh install.sh --version 0.1.0
+sh install.sh                                # or: sh install.sh --version 0.1.1
 ```
 
 `install.sh` downloads the release tarball, checks it against the release's `SHA256SUMS`, unpacks it
@@ -17,7 +17,7 @@ installs under another directory.
 ## Manual install, without the script
 
 ```sh
-v=0.1.0
+v=0.1.1
 base=https://github.com/farming-apps/ssh-1password/releases/download/v$v
 curl -fLO "$base/ssh-1password-$v.tar.gz" -fLO "$base/SHA256SUMS"
 shasum -a 256 -c --ignore-missing SHA256SUMS   # must print "OK"
