@@ -39,7 +39,7 @@ ssh-1password sync             # creates ~/.config/ssh-1password/hosts.yml
 $EDITOR ~/.config/ssh-1password/hosts.yml
 ssh-1password sync             # fetches the .pub files, writes the ssh config
 ssh-1password doctor
-ssh -T git@github-work         # 1Password asks once; GitHub answers "Hi <user>!"
+ssh -T git@github-acme         # 1Password asks once; GitHub answers "Hi <user>!"
 ```
 
 Re-run `sync` whenever you edit the registry or rename a key in 1Password. It is idempotent, and
@@ -49,11 +49,16 @@ Re-run `sync` whenever you edit the registry or rename a key in 1Password. It is
 
 ```yaml
 # alias: what you type after "ssh" and what git remotes use
-github-work:
+github-acme:
   hostname: github.com
   user: git                   # SSH login, always "git" on GitHub/GitLab
-  key: GitHub work            # title of the SSH key item in 1Password
-  email: me@work.example      # optional: git identity for repos cloned through this alias
+  key: GitHub Acme            # title of the SSH key item in 1Password
+  email: me@acme.example      # optional: git identity for repos cloned through this alias
+gitlab-orbit:                 # another project: its own key and identity
+  hostname: gitlab.com
+  user: git
+  key: GitLab Orbit
+  email: me@orbit.example
 homelab:
   hostname: 192.0.2.10
   user: admin
@@ -61,7 +66,7 @@ homelab:
 ```
 
 - `key` is required; everything else is optional (`port`, `vault`, `name`, `sign`, …).
-- Git remotes use the **alias**: `git@github-work:org/repo.git`.
+- Git remotes use the **alias**: `git@github-acme:org/repo.git`.
 - **One key per trust domain, not per host**: fewer keys to rotate, and a compromised domain does
   not open the others.
 

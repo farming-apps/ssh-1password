@@ -7,8 +7,8 @@ cover_image:
 canonical_url:
 ---
 
-For years my `~/.ssh` looked like everyone's: an `id_ed25519` that GitHub, my work servers and the
-homelab all accepted, plus a couple of older keys I was afraid to delete. It worked, and it was a
+For years my `~/.ssh` looked like everyone's: an `id_ed25519` that GitHub, the servers of every
+project I manage and the homelab all accepted, plus a couple of older keys I was afraid to delete. It worked, and it was a
 liability. That file opens every door, for anything that can read it, without asking me.
 
 This post is about moving those keys into 1Password, the problems that shows up once you have more
@@ -47,18 +47,18 @@ attempts (OpenSSH's `MaxAuthTries` is 6), so with five or six keys you start see
 Received disconnect from 192.0.2.10 port 22:2: Too many authentication failures
 ```
 
-And on GitHub the *first* key that matches an account wins, so with a personal and a work account
-you push to the wrong one.
+And on GitHub the *first* key that matches an account wins, so with separate accounts for different
+projects or clients you push as the wrong one.
 
 The standard fix is to give each host only its key: an `IdentityFile` pointing at the **public**
 key, plus `IdentitiesOnly yes`. ssh then asks the agent for exactly that key, and the private half
 stays in 1Password:
 
 ```text
-Host github-work
+Host github-acme
     HostName github.com
     User git
-    IdentityFile ~/.ssh/1password/github-work.pub
+    IdentityFile ~/.ssh/1password/github-acme.pub
     IdentitiesOnly yes
 ```
 
@@ -77,12 +77,17 @@ github-personal:
   hostname: github.com
   user: git
   key: GitHub personal          # title of the SSH key item in 1Password
-github-work:
+github-acme:
   hostname: github.com
   user: git
-  key: GitHub work
-  vault: Work                   # only for keys outside your default vaults
-  email: me@work.example        # git identity for repos cloned through this alias
+  key: GitHub Acme
+  vault: Acme                   # only for keys outside your default vaults
+  email: me@acme.example        # git identity for repos cloned through this alias
+gitlab-orbit:                   # another project: its own key and identity
+  hostname: gitlab.com
+  user: git
+  key: GitLab Orbit
+  email: me@orbit.example
 homelab:
   hostname: 192.0.2.10
   user: admin
@@ -94,7 +99,7 @@ Then:
 ```sh
 ssh-1password sync      # fetches the .pub files from the agent, writes the config
 ssh-1password doctor    # checks that it all lines up
-ssh -T git@github-work  # 1Password asks once; GitHub says "Hi <user>!"
+ssh -T git@github-acme  # 1Password asks once; GitHub says "Hi <user>!"
 ```
 
 `sync` writes:
@@ -114,8 +119,8 @@ It's idempotent, and `--dry-run` shows everything before writing.
 ### One key per trust domain, not per host
 
 A key per host sounds safest, but you end up with forty keys nobody rotates. A single key for
-everything is the problem we started with. The middle ground: **one key per trust domain**. One for
-forges, one for the homelab, one per client. Several hosts share a key; a compromise of one domain
+everything is the problem we started with. The middle ground: **one key per trust domain**, which in
+practice means one per project or client, plus one for the homelab. Several hosts share a key; a compromise of one domain
 doesn't open the others.
 
 ### Git identity per alias, and commit signing
