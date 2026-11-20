@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ssh-1password: SSH keys that never touch your disk</title>
+<meta name="description" content="Keep SSH private keys in 1Password, approve each use with Touch ID, and set up a new machine with one registry file and one command.">
+<meta property="og:title" content="ssh-1password: SSH keys that never touch your disk">
+<meta property="og:description" content="Private keys stay in 1Password. Each host gets only its key. A new machine is install, copy hosts.yml, sync.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://farming-apps.github.io/ssh-1password/">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔑</text></svg>">
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1c1d1f; --muted: #5d6168; --line: #e3e3df; --card: #ffffff;
+    --accent: #1a6dd8; --on-accent: #ffffff; --accent-soft: #e8f0fc; --good: #1d7f43; --bad: #b3261e;
+    --code-bg: #0d1117; --code-fg: #e6edf3;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111214; --fg: #e8e8e6; --muted: #a0a4ab; --line: #2a2c30; --card: #18191c;
+      --accent: #6aa6ff; --on-accent: #0b1220; --accent-soft: #17243a; --good: #52c27f; --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 var(--sans); }
+  main { max-width: 980px; margin: 0 auto; padding: 0 22px 80px; }
+  a { color: var(--accent); }
+  code { font-family: var(--mono); font-size: .9em; }
+  :not(pre) > code { background: var(--accent-soft); padding: .1em .35em; border-radius: 4px; }
+  h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; }
+  h2 { font-size: 1.75rem; margin: 0 0 .4em; }
+  h3 { font-size: 1.1rem; margin: 0 0 .3em; }
+  section { padding: 64px 0 0; }
+  .lead { font-size: 1.15rem; color: var(--muted); max-width: 60ch; }
+  .muted { color: var(--muted); }
+
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; }
+  nav .brand { font-family: var(--mono); font-weight: 600; text-decoration: none; color: var(--fg); }
+  nav .links a { margin-left: 18px; text-decoration: none; color: var(--muted); }
+  nav .links a:hover { color: var(--fg); }
+
+  .hero { padding-top: 48px; }
+  .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.4rem); margin: 0 0 .35em; max-width: 18ch; }
+  .install { display: flex; align-items: stretch; margin: 28px 0 14px; max-width: 720px;
+             background: var(--code-bg); border-radius: 10px; overflow: hidden; }
+  .install pre { margin: 0; padding: 14px 16px; color: var(--code-fg); overflow-x: auto; flex: 1; min-width: 0;
+                 font: 14px/1.6 var(--mono); }
+  @media (max-width: 560px) { nav .links a:not(:last-child) { display: none; } }
+  .install button { border: 0; background: #2b3340; color: #fff; padding: 0 18px; cursor: pointer;
+                    font: 600 14px var(--sans); }
+  .install button:hover { background: #39465a; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+  .btn { display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none;
+         font-weight: 600; border: 1px solid var(--line); color: var(--fg); background: var(--card); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+  .demo { margin-top: 40px; }
+  .demo img { width: 100%; height: auto; display: block; border-radius: 10px;
+              box-shadow: 0 10px 30px rgba(0,0,0,.18); }
+
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); margin-top: 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .card p { margin: 0; color: var(--muted); }
+
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 28px; }
+  .flow .step { position: relative; padding: 18px 16px; background: var(--card);
+                border: 1px solid var(--line); text-align: center; }
+  .flow .step:first-child { border-radius: 12px 0 0 12px; }
+  .flow .step:last-child { border-radius: 0 12px 12px 0; }
+  .flow .step + .step { border-left: 0; }
+  .flow .step b { display: block; font-family: var(--mono); font-size: .95rem; }
+  .flow .step span { font-size: .88rem; color: var(--muted); }
+  .flow .step:not(:last-child)::after { content: "→"; position: absolute; right: -11px; top: 50%;
+                transform: translateY(-50%); background: var(--bg); color: var(--accent);
+                font-weight: 700; z-index: 1; padding: 0 2px; }
+  @media (max-width: 720px) {
+    .flow { grid-template-columns: 1fr; }
+    .flow .step, .flow .step:first-child, .flow .step:last-child { border-radius: 0; border-left: 1px solid var(--line); }
+    .flow .step + .step { border-top: 0; }
+    .flow .step:first-child { border-radius: 12px 12px 0 0; }
+    .flow .step:last-child { border-radius: 0 0 12px 12px; }
+    .flow .step:not(:last-child)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -14px;
+                transform: translateX(-50%); }
+  }
+
+  .steps { counter-reset: s; list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 14px; }
+  .steps li { counter-increment: s; display: grid; grid-template-columns: 40px 1fr; gap: 14px; align-items: start; }
+  .steps li::before { content: counter(s); width: 32px; height: 32px; border-radius: 50%;
+                      background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 700; }
+  pre.block { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: 10px;
+              overflow-x: auto; font: 14px/1.6 var(--mono); margin: 8px 0 0; }
+  pre.block .c { color: #8b949e; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 22px; font-size: .97rem; }
+  th, td { text-align: left; padding: 12px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  td.bad { color: var(--bad); } td.good { color: var(--good); }
+  .table-wrap { overflow-x: auto; }
+
+  details { border-bottom: 1px solid var(--line); padding: 14px 0; }
+  details summary { cursor: pointer; font-weight: 600; }
+  details p { margin: .6em 0 0; color: var(--muted); }
+
+  .final { text-align: center; padding: 72px 0 0; }
+  .final .cta { justify-content: center; }
+  footer { text-align: center; color: var(--muted); font-size: .9rem; padding: 48px 0 32px; }
+</style>
+</head>
+<body>
+<main>
+  <nav>
+    <a class="brand" href="./">ssh-1password</a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#portable">Portability</a>
+      <a href="https://github.com/farming-apps/ssh-1password">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <h1>Your SSH keys shouldn't live on your laptop.</h1>
+    <p class="lead">
+      Keep private keys in 1Password, approve every use with Touch ID, and give each host
+      <strong>only its key</strong>. Your whole setup is one small file with no secrets, so a new
+      machine is ready in minutes.
+    </p>
+    <div class="install">
+      <pre id="cmd">curl -fLO https://github.com/farming-apps/ssh-1password/releases/latest/download/install.sh
+sh install.sh</pre>
+      <button type="button" id="copy" aria-label="Copy install commands">Copy</button>
+    </div>
+    <p class="muted">One Python 3.8+ script, standard library only. macOS and Linux. No <code>op</code> CLI. MIT.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/farming-apps/ssh-1password#quick-start">Quick start</a>
+      <a class="btn" href="https://github.com/farming-apps/ssh-1password">View on GitHub</a>
+    </div>
+    <div class="demo">
+      <img src="assets/demo.svg" width="860" height="507"
+           alt="Terminal: ssh-1password doctor reports every check OK, then ssh -T git@github-personal is approved with Touch ID and GitHub greets the user.">
+    </div>
+  </header>
+
+  <section id="problem">
+    <h2>The file in <code>~/.ssh</code> is the problem</h2>
+    <p class="lead">A private key file works for anything that can read it, without asking you.</p>
+    <div class="grid">
+      <div class="card"><h3>Any process can copy it</h3><p>A malicious package, a compromised extension or anyone with root takes the file and uses it from anywhere, silently.</p></div>
+      <div class="card"><h3>It leaks into backups</h3><p>Disk images, sync folders and old laptops keep copies you forgot about. Revoking means finding every server that trusts it.</p></div>
+      <div class="card"><h3>One key opens everything</h3><p>The usual <code>id_ed25519</code> is accepted by GitHub, work servers and your homelab alike. One leak, every door.</p></div>
+    </div>
+  </section>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p class="lead">
+      The 1Password SSH agent holds the keys. ssh-1password adds the missing piece: a registry that maps
+      each host alias to one key, and generates the ssh and git config from it.
+    </p>
+    <div class="flow" role="list">
+      <div class="step" role="listitem"><b>ssh github-work</b><span>picks the alias from your config</span></div>
+      <div class="step" role="listitem"><b>.pub on disk</b><span>tells ssh which key to request (public only)</span></div>
+      <div class="step" role="listitem"><b>1Password agent</b><span>asks for Touch ID or your system unlock</span></div>
+      <div class="step" role="listitem"><b>signed, not copied</b><span>the private key never leaves the vault</span></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Only the right key per host</h3><p>Each host gets <code>IdentitiesOnly yes</code> and its own <code>.pub</code>, so servers never see your other keys and you never hit "Too many authentication failures".</p></div>
+      <div class="card"><h3>One key per trust domain</h3><p>Group hosts: one key for forges, one for the homelab, one per client. Fewer keys to rotate, and a compromised domain does not open the others.</p></div>
+      <div class="card"><h3>Git identity per alias</h3><p>Add <code>email:</code> and every repo cloned through that alias commits with that identity. Add <code>sign:</code> and the same key signs commits ("Verified" on GitHub and GitLab).</p></div>
+      <div class="card"><h3><code>doctor</code> tells you what drifted</h3><p>Agent reachable, keys offered, config precedence checked with <code>ssh -G</code>, git identity tested in a throwaway repo.</p></div>
+    </div>
+  </section>
+
+  <section id="registry">
+    <h2>Your whole setup is one file</h2>
+    <p class="lead">Aliases, hostnames, users and key <em>titles</em>. No secrets in it.</p>
+<pre class="block"><span class="c"># ~/.config/ssh-1password/hosts.yml</span>
+github-work:
+  hostname: github.com
+  user: git
+  key: GitHub work            <span class="c"># title of the key item in 1Password</span>
+  email: me@work.example      <span class="c"># optional: git identity for these repos</span>
+homelab:
+  hostname: 192.0.2.10
+  user: admin
+  key: Homelab</pre>
+<pre class="block">ssh-1password sync      <span class="c"># fetches the .pub files, writes the ssh and git config</span>
+ssh-1password doctor
+git clone git@github-work:org/repo.git</pre>
+  </section>
+
+  <section id="portable">
+    <h2>A new machine in five minutes</h2>
+    <p class="lead">
+      With file keys, a new laptop means copying <code>~/.ssh</code> around or re-uploading keys
+      everywhere. Here the keys are already in your vault; you only bring the registry.
+    </p>
+    <ol class="steps">
+      <li><div><strong>Install 1Password</strong> and enable <em>Settings → Developer → Use the SSH agent</em>.</div></li>
+      <li><div><strong>Install the tool</strong> with the two commands above.</div></li>
+      <li><div><strong>Bring <code>hosts.yml</code></strong> from your private dotfiles or a 1Password Secure Note (or set <code>SSH_1P_HOSTS</code> to its path).</div></li>
+      <li><div><strong>Run <code>ssh-1password sync</code></strong>. Same aliases, same keys, same git identities, on macOS or Linux.</div></li>
+    </ol>
+    <p class="muted" style="margin-top:18px">
+      Leaving a machine? There is no private key to wipe: what <code>sync</code> wrote is public by nature.
+      Sign out of 1Password and that machine can no longer use your keys.
+      <a href="https://github.com/farming-apps/ssh-1password/blob/main/docs/new-machine.md">Full guide</a>.
+    </p>
+  </section>
+
+  <section id="compare">
+    <h2>File keys vs ssh-1password</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Key files in <code>~/.ssh</code></th><th>ssh-1password</th></tr></thead>
+      <tbody>
+        <tr><td>Private key on disk</td><td class="bad">Yes, readable by your user and root</td><td class="good">No, only <code>.pub</code> and config</td></tr>
+        <tr><td>Each use</td><td class="bad">Silent</td><td class="good">Touch ID or system unlock, logged in the item's Activity</td></tr>
+        <tr><td>Keys offered to a host</td><td class="bad">Often all of them</td><td class="good">Only the one registered for it</td></tr>
+        <tr><td>New machine</td><td class="bad">Copy secrets or regenerate and re-upload</td><td class="good">Install, copy <code>hosts.yml</code>, <code>sync</code></td></tr>
+        <tr><td>Git identity and signing</td><td class="bad">Per-repo <code>git config</code> by hand</td><td class="good">Per alias, generated</td></tr>
+        <tr><td>Agent forwarding</td><td>Up to you</td><td class="good"><code>ForwardAgent no</code> by default; use <code>ProxyJump</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section id="limits">
+    <h2>Where it does not fit</h2>
+    <div class="grid">
+      <div class="card"><h3>Unattended jobs</h3><p>cron, systemd timers and CI runners have nobody to approve a prompt. Give them a dedicated file key restricted in <code>authorized_keys</code>.</p></div>
+      <div class="card"><h3>Hosts that impose a key</h3><p>A client bastion that hands you a key file? Write its <code>Host</code> block above the Include in your own config; yours always wins.</p></div>
+      <div class="card"><h3>Your vault must be unlocked</h3><p>That is the point. If a prompt appears that you did not expect, deny it: something on the machine is trying to use your keys.</p></div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <h2>FAQ</h2>
+    <details><summary>Do I need the <code>op</code> CLI or a 1Password service account?</summary>
+      <p>No. It talks to the 1Password SSH agent through <code>ssh-add -L</code> to read public keys. The app with the SSH agent enabled is enough.</p></details>
+    <details><summary>Will it overwrite my <code>~/.ssh/config</code>?</summary>
+      <p>No. It appends one <code>Include</code> at the end, once, with a backup. Everything it generates lives in <code>~/.ssh/config.d/1password.conf</code>, and your own <code>Host</code> blocks above it take precedence. <code>sync --dry-run</code> shows every change first.</p></details>
+    <details><summary>Can I keep using an existing key?</summary>
+      <p>Yes. Import it into 1Password and register its title. For new setups, prefer fresh ed25519 keys, one per trust domain.</p></details>
+    <details><summary>Does it work on Linux?</summary>
+      <p>Yes, with the 1Password desktop app for Linux and its SSH agent. Approval uses your system authentication.</p></details>
+    <details><summary>How do I uninstall it?</summary>
+      <p><code>sh install.sh --uninstall</code> removes the tool. The generated files are plain ssh and git config.</p></details>
+  </section>
+
+  <section class="final">
+    <h2>Take the keys off your disk.</h2>
+    <p class="lead" style="margin:0 auto">Five minutes to set up, then every machine you own gets the same keys without copying a secret.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/farming-apps/ssh-1password#install">Install</a>
+      <a class="btn" href="https://github.com/farming-apps/ssh-1password/blob/main/docs/security.md">Security notes</a>
+    </div>
+  </section>
+
+  <footer>
+    MIT licensed · <a href="https://github.com/farming-apps/ssh-1password">farming-apps/ssh-1password</a> ·
+    Not affiliated with 1Password.
+  </footer>
+</main>
+<script>
+  document.getElementById("copy").addEventListener("click", function () {
+    var b = this;
+    navigator.clipboard.writeText(document.getElementById("cmd").textContent).then(function () {
+      b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1500);
+    });
+  });
+</script>
+</body>
+</html>

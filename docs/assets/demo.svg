@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="507" viewBox="0 0 860 507" role="img" aria-label="ssh-1password doctor output followed by ssh -T approved with Touch ID">
+<rect width="860" height="507" rx="10" fill="#0d1117"/>
+<rect width="860" height="32" rx="10" fill="#161b22"/><rect y="22" width="860" height="10" fill="#161b22"/>
+<circle cx="20" cy="16" r="6" fill="#ff5f57"/><circle cx="40" cy="16" r="6" fill="#febc2e"/><circle cx="60" cy="16" r="6" fill="#28c840"/>
+<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13">
+<text x="18" y="52" xml:space="preserve" fill="#e6edf3">$ ssh-1password doctor</text>
+<text x="18" y="71" xml:space="preserve" fill="#79c0ff" font-weight="bold">1Password</text>
+<text x="18" y="90" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   1Password app installed</text>
+<text x="18" y="109" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   SSH agent reachable (2 key(s) offered)</text>
+<text x="18" y="128" xml:space="preserve" fill="#79c0ff" font-weight="bold">registry</text>
+<text x="18" y="147" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   ~/.config/ssh-1password/hosts.yml: 2 host(s), 2 key(s)</text>
+<text x="18" y="166" xml:space="preserve" fill="#79c0ff" font-weight="bold">ssh config</text>
+<text x="18" y="185" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   ~/.ssh/config includes config.d/1password.conf</text>
+<text x="18" y="204" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   ~/.ssh/config.d/1password.conf matches the registry</text>
+<text x="18" y="223" xml:space="preserve" fill="#79c0ff" font-weight="bold">keys</text>
+<text x="18" y="242" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   GitHub personal: ~/.ssh/1password/github-personal.pub offered by the agent</text>
+<text x="18" y="261" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   Homelab: ~/.ssh/1password/homelab.pub offered by the agent</text>
+<text x="18" y="280" xml:space="preserve" fill="#79c0ff" font-weight="bold">hosts</text>
+<text x="18" y="299" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   github-personal -&gt; git@github.com, key GitHub personal</text>
+<text x="18" y="318" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   homelab -&gt; admin@192.0.2.10, key Homelab</text>
+<text x="18" y="337" xml:space="preserve" fill="#79c0ff" font-weight="bold">agent.toml</text>
+<text x="18" y="356" xml:space="preserve" fill="#c9d1d9">  <tspan fill="#3fb950">OK</tspan>   ~/.config/1Password/ssh/agent.toml (generated) lists every registered key</text>
+<text x="18" y="375" xml:space="preserve" fill="#c9d1d9"></text>
+<text x="18" y="394" xml:space="preserve" fill="#3fb950" font-weight="bold">doctor: all good</text>
+<text x="18" y="413" xml:space="preserve" fill="#c9d1d9"></text>
+<text x="18" y="432" xml:space="preserve" fill="#e6edf3">$ ssh -T git@github-personal</text>
+<text x="18" y="451" xml:space="preserve" fill="#d2a8ff">  ↳ 1Password asks to approve &quot;GitHub personal&quot; with Touch ID ✓</text>
+<text x="18" y="470" xml:space="preserve" fill="#c9d1d9">Hi octocat! You&#x27;ve successfully authenticated, but GitHub does not provide shell access.</text>
+</g>
+</svg>

@@ -23,3 +23,6 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 3. Per host, in parallel with the old key: add the new public key to `authorized_keys`, test with
    `ssh -o IdentitiesOnly=yes -i ~/.ssh/1password/<slug>.pub <host>`, then remove the old one.
 4. Move retired private keys out of `~/.ssh`, wait a few days, delete them.
+
+After that, setting up another machine needs no key copying: see
+[a new machine in five minutes](new-machine.md).
