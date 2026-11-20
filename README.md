@@ -9,6 +9,15 @@ and git config from it, and a `doctor` that tells you when something drifted.
 
 One script, Python 3.8+ standard library, macOS and Linux. No `op` CLI needed.
 
+- **No private keys on disk.** Nothing in `~/.ssh` worth stealing: only `.pub` files and config.
+- **Touch ID per use.** Every key use needs your approval and shows in 1Password's item Activity.
+- **Portable.** Your setup is one `hosts.yml` with no secrets: a new machine is
+  [install, copy the registry, `sync`](docs/new-machine.md).
+
+![ssh-1password doctor, then ssh -T approved with Touch ID](docs/assets/demo.svg)
+
+Why this approach, in one page: **[farming-apps.github.io/ssh-1password](https://farming-apps.github.io/ssh-1password/)**
+
 ## Install
 
 ```sh
@@ -62,6 +71,7 @@ homelab:
   commit signing, `agent.toml`, `doctor`.
 - [Troubleshooting](docs/troubleshooting.md)
 - [Security notes and migrating from file keys](docs/security.md)
+- [A new machine in five minutes](docs/new-machine.md)
 - [Install options](docs/install.md)
 
 ## Contributing

@@ -1,0 +1,34 @@
+name: Bug report
+description: sync or doctor does something wrong, or ssh/git does not behave as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issues go through [private vulnerability reporting](https://github.com/farming-apps/ssh-1password/security/advisories/new), not here.
+        **Replace real hostnames, IPs, emails and key titles** before pasting anything.
+  - type: input
+    id: version
+    attributes:
+      label: Version and OS
+      placeholder: "ssh-1password 0.1.1, macOS 15 / Ubuntu 24.04, Python 3.12"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `ssh-1password doctor`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: registry
+    attributes:
+      label: Smallest hosts.yml that reproduces it (sanitized)
+      render: yaml
