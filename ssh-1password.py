@@ -16,16 +16,16 @@ Usage: ssh-1password.py sync|doctor [--dry-run] [--file <hosts.yml>] [--home <di
   --version  print the version and exit
 
 Registry format (flat YAML, PyYAML optional):
-  github-work:                  # alias: what you type after "ssh" and in git remotes
+  github-acme:                  # alias: what you type after "ssh" and in git remotes
     hostname: github.com        # optional
     user: git                   # optional; SSH login, always "git" on GitHub/GitLab (not your account)
     port: 22                    # optional
-    key: GitHub work            # required: title of the SSH key item in 1Password, or SHA256:fingerprint
-    vault: Work                 # optional: only for keys outside the Personal/Private/Employee vaults
-    email: me@work.example      # optional: git identity for repos whose remote uses this alias
+    key: GitHub Acme            # required: title of the SSH key item in 1Password, or SHA256:fingerprint
+    vault: Acme                 # optional: only for keys outside the Personal/Private/Employee vaults
+    email: me@acme.example      # optional: git identity for repos whose remote uses this alias
     name: My Name               # optional, with email
     sign: manual                # optional, with email: always | manual (SSH commit signing via 1Password)
-    signing_key: Signing work   # optional, with sign: a dedicated 1Password key item (default: key)
+    signing_key: Signing Acme   # optional, with sign: a dedicated 1Password key item (default: key)
 
 Git identity: for each host with email, sync writes ~/.config/ssh-1password/git/<alias>.gitconfig
 and global `includeIf "hasconfig:remote.*.url:<user>@<alias>:*/**"` entries (git 2.36+), so commits in repos

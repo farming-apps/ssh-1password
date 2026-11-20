@@ -3,17 +3,17 @@
 ## The registry: `~/.config/ssh-1password/hosts.yml`
 
 ```yaml
-# alias: what you type after "ssh" and what git remotes use (git@github-work:org/repo.git)
+# alias: what you type after "ssh" and what git remotes use (git@github-acme:org/repo.git)
 github-personal:
   hostname: github.com
   user: git                   # SSH login, always "git" on GitHub/GitLab (not your account name)
   key: GitHub personal        # title of the SSH key item in 1Password
-github-work:
+github-acme:
   hostname: github.com
   user: git
-  key: GitHub work
-  vault: Work                 # only for keys outside your Personal/Private/Employee vault
-  email: me@work.example      # git identity for repos cloned through this alias
+  key: GitHub Acme
+  vault: Acme                 # only for keys outside your Personal/Private/Employee vault
+  email: me@acme.example      # git identity for repos cloned through this alias
   name: My Name
   sign: manual                # SSH commit signing ready for those repos (manual | always)
 homelab:                      # several patterns are allowed: "pve router npm"
@@ -25,9 +25,9 @@ homelab:                      # several patterns are allowed: "pve router npm"
 - `key` is required: the item title in 1Password, or its `SHA256:` fingerprint if titles clash.
 - `hostname`, `user`, `port`, `vault`, `email`, `name`, `sign`, `signing_key` are optional. `user` is the SSH login, not your forge
   account: GitHub and GitLab always use `git` and tell accounts apart by the key. Without it you
-  must write `git@` in every remote (`git@github-work:org/repo.git`) and in `ssh -T git@github-work`.
-- Git remotes use the **alias**, not `github.com`: `git@github-work:org/repo.git`. For an existing
-  clone: `git remote set-url origin git@github-work:org/repo.git`.
+  must write `git@` in every remote (`git@github-acme:org/repo.git`) and in `ssh -T git@github-acme`.
+- Git remotes use the **alias**, not `github.com`: `git@github-acme:org/repo.git`. For an existing
+  clone: `git remote set-url origin git@github-acme:org/repo.git`.
 - The file lives outside any repository (hostnames are endpoints). Override its location with
   `$SSH_1P_HOSTS` or `--file`.
 
@@ -118,7 +118,7 @@ re-run `sync` and upload the new public key.
 
 Without it, the agent offers every key in your default vaults, in creation order, to every server.
 Servers reject clients after about six keys (`Too many authentication failures`), and a key from a
-vault you shared with work is not offered at all. With it, only the listed keys are offered, in that
+vault shared with a project team is not offered at all. With it, only the listed keys are offered, in that
 order, and keys from other vaults become available (`vault:` in the registry). Creating the file
 changes the agent's behaviour even if empty, which is why `sync` never writes one without
 entries: with no hosts, or when every key is registered by `SHA256:` fingerprint (the allowlist

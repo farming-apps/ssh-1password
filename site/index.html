@@ -167,7 +167,7 @@
     <h1>Your SSH keys shouldn't live on your laptop.</h1>
     <p class="lead">
       Keep private keys in 1Password, approve every use with Touch ID, and give each host
-      <strong>only its key</strong>. Your whole setup is one small file with no secrets, so a new
+      <strong>only its key</strong>, across every project you manage. Your whole setup is one small file with no secrets, so a new
       machine is ready in minutes.
     </p>
     <div class="install">
@@ -192,7 +192,7 @@ sh install.sh</pre>
     <div class="grid">
       <div class="card"><h3>Any process can copy it</h3><p>A malicious package, a compromised extension or anyone with root takes the file and uses it from anywhere, silently.</p></div>
       <div class="card"><h3>It leaks into backups</h3><p>Disk images, sync folders and old laptops keep copies you forgot about. Revoking means finding every server that trusts it.</p></div>
-      <div class="card"><h3>One key opens everything</h3><p>The usual <code>id_ed25519</code> is accepted by GitHub, work servers and your homelab alike. One leak, every door.</p></div>
+      <div class="card"><h3>One key opens everything</h3><p>The usual <code>id_ed25519</code> is accepted by every project's servers, every forge account and your homelab alike. One leak, every door.</p></div>
     </div>
   </section>
 
@@ -204,16 +204,16 @@ sh install.sh</pre>
     </p>
     <div class="sim" id="sim">
       <div class="sim-bar">
-        <span class="sim-title">Try it: what happens when you run <code>ssh -T github-work</code></span>
+        <span class="sim-title">Try it: what happens when you run <code>ssh -T github-acme</code></span>
         <button type="button" class="btn primary sim-run" id="sim-run" hidden>▶ Run</button>
       </div>
       <div class="term-wrap">
         <div class="term" id="term" aria-live="polite">
-          <div class="ln"><span class="pr">$</span> <span id="typed">ssh -T github-work</span><span class="cursor" aria-hidden="true"></span></div>
+          <div class="ln"><span class="pr">$</span> <span id="typed">ssh -T github-acme</span><span class="cursor" aria-hidden="true"></span></div>
         </div>
         <div class="op" id="op" role="dialog" aria-modal="false" aria-labelledby="op-title" hidden>
           <div class="op-head"><span class="op-logo" aria-hidden="true">1</span><span id="op-title">1Password <small>(simulated)</small></span></div>
-          <p><strong>Terminal</strong> wants to use the SSH key <strong>GitHub work</strong>.</p>
+          <p><strong>Terminal</strong> wants to use the SSH key <strong>Acme</strong>.</p>
           <div class="op-actions">
             <button type="button" class="btn" id="op-deny">Deny</button>
             <button type="button" class="btn primary" id="op-allow">
@@ -223,7 +223,7 @@ sh install.sh</pre>
         </div>
       </div>
       <div class="flow" role="list">
-        <div class="step" role="listitem" data-stage="1"><b>ssh github-work</b><span>picks the alias from your config</span></div>
+        <div class="step" role="listitem" data-stage="1"><b>ssh github-acme</b><span>picks the alias from your config</span></div>
         <div class="step" role="listitem" data-stage="2"><b>.pub on disk</b><span>tells ssh which key to request (public only)</span></div>
         <div class="step" role="listitem" data-stage="3"><b>1Password agent</b><span>asks for Touch ID or your system unlock</span></div>
         <div class="step" role="listitem" data-stage="4"><b>signed, not copied</b><span>the private key never leaves the vault</span></div>
@@ -232,7 +232,7 @@ sh install.sh</pre>
     </div>
     <div class="grid">
       <div class="card"><h3>Only the right key per host</h3><p>Each host gets <code>IdentitiesOnly yes</code> and its own <code>.pub</code>, so servers never see your other keys and you never hit "Too many authentication failures".</p></div>
-      <div class="card"><h3>One key per trust domain</h3><p>Group hosts: one key for forges, one for the homelab, one per client. Fewer keys to rotate, and a compromised domain does not open the others.</p></div>
+      <div class="card"><h3>One key per project</h3><p>Group hosts by trust domain: one key per project or client, one for the homelab. Fewer keys to rotate, and a compromised project does not open the others.</p></div>
       <div class="card"><h3>Git identity per alias</h3><p>Add <code>email:</code> and every repo cloned through that alias commits with that identity. Add <code>sign:</code> and the same key signs commits ("Verified" on GitHub and GitLab).</p></div>
       <div class="card"><h3><code>doctor</code> tells you what drifted</h3><p>Agent reachable, keys offered, config precedence checked with <code>ssh -G</code>, git identity tested in a throwaway repo.</p></div>
     </div>
@@ -242,18 +242,27 @@ sh install.sh</pre>
     <h2>Your whole setup is one file</h2>
     <p class="lead">Aliases, hostnames, users and key <em>titles</em>. No secrets in it.</p>
 <pre class="block"><span class="c"># ~/.config/ssh-1password/hosts.yml</span>
-github-work:
+<span class="c"># project Acme: its repos and its servers share one key</span>
+github-acme:
   hostname: github.com
   user: git
-  key: GitHub work            <span class="c"># title of the key item in 1Password</span>
-  email: me@work.example      <span class="c"># optional: git identity for these repos</span>
-homelab:
+  key: Acme                   <span class="c"># title of the key item in 1Password</span>
+  email: me@acme.example      <span class="c"># optional: git identity for these repos</span>
+acme-prod:
   hostname: 192.0.2.10
-  user: admin
-  key: Homelab</pre>
+  user: deploy
+  key: Acme
+
+<span class="c"># project Orbit: another forge, another key, another identity</span>
+gitlab-orbit:
+  hostname: gitlab.com
+  user: git
+  key: Orbit
+  email: me@orbit.example</pre>
 <pre class="block">ssh-1password sync      <span class="c"># fetches the .pub files, writes the ssh and git config</span>
 ssh-1password doctor
-git clone git@github-work:org/repo.git</pre>
+git clone git@github-acme:acme/api.git       <span class="c"># commits as me@acme.example</span>
+git clone git@gitlab-orbit:orbit/web.git     <span class="c"># commits as me@orbit.example</span></pre>
   </section>
 
   <section id="portable">
@@ -343,7 +352,7 @@ git clone git@github-work:org/repo.git</pre>
         allow = document.getElementById("op-allow"), deny = document.getElementById("op-deny"),
         steps = document.querySelectorAll(".flow .step");
     var fast = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    var CMD = "ssh -T github-work", PUB = "~/.ssh/1password/github-work.pub";
+    var CMD = "ssh -T github-acme", PUB = "~/.ssh/1password/acme.pub";
     var timers = [];
     run.hidden = false;
 
@@ -390,8 +399,8 @@ git clone git@github-work:org/repo.git</pre>
     function step1() {
       wait(350).then(function () {
         stage(1);
-        say("ssh reads the config that sync generated: github-work means git@github.com, with IdentitiesOnly yes.");
-        line("debug1: config.d/1password.conf: Host github-work -> git@github.com", "dim");
+        say("ssh reads the config that sync generated: github-acme means git@github.com, with IdentitiesOnly yes.");
+        line("debug1: config.d/1password.conf: Host github-acme -> git@github.com", "dim");
         return wait(1400);
       }).then(function () {
         stage(2);

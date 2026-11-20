@@ -36,7 +36,7 @@ The registry contains hostnames, which are endpoints worth keeping to yourself: 
    ```sh
    ssh-1password sync
    ssh-1password doctor
-   ssh -T git@github-work        # 1Password asks once; GitHub answers "Hi <user>!"
+   ssh -T git@github-acme        # 1Password asks once; GitHub answers "Hi <user>!"
    ```
 
 The generated files spell paths with `~`, and `sync` picks the agent socket for the platform
